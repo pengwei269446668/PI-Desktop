@@ -17,7 +17,7 @@ import { parseProbe, probed, propsProbe, slotMounts, slotSsr } from "./helpers/s
 // Live Voice's idle entry is conditional on the feature setting and therefore
 // is not a permanent host slot in this disabled-by-default fixture.
 const HOST_LEFT = ["chat.addFiles", "settings.mode", "chat.permissionMode"];
-const HOST_RIGHT = ["context", "chat.model: Model. chat.reasoningLevel: Off", "chat.send"];
+const HOST_RIGHT = ["chat.model: Model. chat.reasoningLevel: Off", "chat.send"];
 
 async function composer(t, toolbarProps = {}) {
   const ssr = await slotSsr(t);
@@ -36,8 +36,6 @@ function sidesOf(html) {
     const token = /<output data-probe="([^"]*)">([^<]*)<\/output>|<button\b([^>]*)>/g;
     for (const [, probe, props, button] of part.matchAll(token)) {
       if (probe) shown.push(`${probe}:${parseProbe(props).position}`);
-      // The context meter is labeled with its live numbers.
-      else if (button.includes("context-inspector-trigger")) shown.push("context");
       else shown.push(button.match(/aria-label="([^"]*)"/)[1]);
     }
     return shown;

@@ -30,6 +30,7 @@ import {
 import { ComposerAutocomplete } from "./ComposerAutocomplete";
 import { AskToolCard } from "./AskToolCard";
 import { PlanApprovalBar } from "./PlanApprovalBar";
+import { SessionStatsBar } from "./SessionStatsBar";
 import { TodoDock } from "./TodoDock";
 import {
   COMPOSER_MAX_VISIBLE_ROWS,
@@ -384,6 +385,9 @@ export function Composer({
   const modelLabel = modelId
     ? composerModelDisplayName(provider, modelId)
     : t("chat.model");
+  // The chip leads with the owning provider so the model reads as
+  // "provider · model · level" without opening the menu.
+  const providerName = modelId ? provider?.name.trim() || undefined : undefined;
   const modelMenu = useComposerModelMenu({
     configureActiveSession,
     mode,
@@ -606,8 +610,8 @@ export function Composer({
             showToast={showToast}
             modelMenu={modelMenu}
             modelLabel={modelLabel}
+            providerName={providerName}
             thinkingLabel={thinkingLabel}
-            contextUsage={composerContextUsage ?? null}
             value={value}
             modelReady={modelReady}
             sendBlocked={sendBlocked}
@@ -624,6 +628,12 @@ export function Composer({
             workSessionLabel={activeSessionSummary?.title}
           />
         </div>
+        {variant === "docked" && activeSessionId ? (
+          <SessionStatsBar
+            messages={liveMessages}
+            inspector={composerContextUsage}
+          />
+        ) : null}
       </div>
     </div>
   );

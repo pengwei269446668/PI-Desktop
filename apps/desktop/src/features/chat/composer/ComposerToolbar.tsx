@@ -10,7 +10,6 @@ import {
 } from "@pi-desktop/shared";
 import type { AppState } from "../../../stores/app-store";
 import { ComposerPermissionPicker } from "./ComposerPermissionPicker";
-import { ContextUsageInspector } from "../../../components/ContextUsageInspector";
 import { ComposerControlSlots } from "./ComposerControlSlots";
 import { TooltipButton } from "../../../components/ui";
 import {
@@ -30,7 +29,6 @@ import {
 import type { useComposerModelMenu } from "./hooks/useComposerModelMenu";
 
 type ModelMenuController = ReturnType<typeof useComposerModelMenu>;
-type ContextUsage = Parameters<typeof ContextUsageInspector>[0];
 
 export type ComposerToolbarProps = {
   t: TFunction;
@@ -49,8 +47,8 @@ export type ComposerToolbarProps = {
   showToast: AppState["showToast"];
   modelMenu: ModelMenuController;
   modelLabel: string;
+  providerName?: string;
   thinkingLabel: string;
-  contextUsage: ContextUsage | null;
   value: string;
   modelReady: boolean;
   sendBlocked: boolean;
@@ -85,8 +83,8 @@ export function ComposerToolbar({
   showToast,
   modelMenu,
   modelLabel,
+  providerName,
   thinkingLabel,
-  contextUsage,
   value,
   modelReady,
   sendBlocked,
@@ -180,11 +178,11 @@ export function ComposerToolbar({
 
       <div className="composer-right">
         <ComposerControlSlots side="right" />
-        {contextUsage ? <ContextUsageInspector {...contextUsage} /> : null}
         <ComposerModelPicker
           t={t}
           controller={modelMenu}
           modelLabel={modelLabel}
+          providerName={providerName}
           thinkingLabel={thinkingLabel}
           thinkingLevel={thinkingLevel}
           selectedProviderId={providerId}

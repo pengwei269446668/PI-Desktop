@@ -16,6 +16,8 @@ export type ComposerModelPickerProps = {
   t: TFunction;
   controller: ModelMenuController;
   modelLabel: string;
+  /** Optional provider name shown before the model label (e.g. "deepseek · deepseek-v4.1"). */
+  providerName?: string;
   thinkingLabel: string;
   thinkingLevel: string;
   selectedProviderId?: string;
@@ -30,6 +32,7 @@ export function ComposerModelPicker({
   t,
   controller,
   modelLabel,
+  providerName,
   thinkingLabel,
   thinkingLevel,
   selectedProviderId,
@@ -75,8 +78,8 @@ export function ComposerModelPicker({
           ref={ref}
           type="button"
           className={`icon-btn composer-model-thinking-chip ${open ? "active" : ""}`}
-          tooltip={`${modelLabel} · ${t("chat.reasoningLevel")}: ${thinkingLabel}`}
-          ariaLabel={`${t("chat.model")}: ${modelLabel}. ${t("chat.reasoningLevel")}: ${thinkingLabel}`}
+          tooltip={`${providerName ? `${providerName} · ` : ""}${modelLabel} · ${t("chat.reasoningLevel")}: ${thinkingLabel}`}
+          ariaLabel={`${t("chat.model")}: ${providerName ? `${providerName} · ` : ""}${modelLabel}. ${t("chat.reasoningLevel")}: ${thinkingLabel}`}
           aria-haspopup="menu"
           aria-expanded={open}
           disabled={controlsBlocked}
@@ -93,6 +96,12 @@ export function ComposerModelPicker({
           <span className="composer-model-thinking-icon" aria-hidden="true">
             <IconBot size={14} />
           </span>
+          {providerName ? (
+            <>
+              <span className="composer-model-thinking-provider">{providerName}</span>
+              <span className="composer-model-thinking-dot" aria-hidden="true">·</span>
+            </>
+          ) : null}
           <span className="composer-model-thinking-model">{modelLabel}</span>
           {thinkingLevel !== "off" ? (
             <>
