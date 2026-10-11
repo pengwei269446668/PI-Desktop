@@ -162,6 +162,22 @@
   max-width: 170px;
 }
 
+/* Provider prefix ("deepseek · deepseek-v4.1 · medium"): keep it muted and
+   shrink the model label so the whole chip still fits its max-width. */
+.composer-model-thinking-provider {
+  min-width: 0;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ds-text-muted);
+}
+
+.composer-model-thinking-chip:has(.composer-model-thinking-provider)
+  .composer-model-thinking-model {
+  max-width: 120px;
+}
+
 .composer-model-thinking-level {
   max-width: 88px;
   color: var(--ds-accent);
