@@ -4,7 +4,7 @@ import test from "node:test";
 import { loadStyles } from "./helpers/styles.mjs";
 
 const styles = await loadStyles();
-const [toolbarSource, modelPickerSource] = await Promise.all([
+const [toolbarSource, modelPickerSource, statsBarSource] = await Promise.all([
   readFile(
     new URL("../src/features/chat/composer/ComposerToolbar.tsx", import.meta.url),
     "utf8",
@@ -13,8 +13,12 @@ const [toolbarSource, modelPickerSource] = await Promise.all([
     new URL("../src/features/chat/composer/ComposerModelPicker.tsx", import.meta.url),
     "utf8",
   ),
+  readFile(
+    new URL("../src/components/SessionStatsBar.tsx", import.meta.url),
+    "utf8",
+  ),
 ]);
-const composerSource = `${toolbarSource}\n${modelPickerSource}`;
+const composerSource = `${toolbarSource}\n${modelPickerSource}\n${statsBarSource}`;
 
 test("narrow composer containers progressively simplify the model controls", () => {
   assert.match(
@@ -44,7 +48,8 @@ test("narrow composer containers progressively simplify the model controls", () 
 
 test("responsive rules preserve the semantic model trigger and action controls", () => {
   assert.match(composerSource, /className=\{`icon-btn composer-model-thinking-chip/);
-  assert.match(composerSource, /ariaLabel=\{`\$\{t\("chat\.model"\)\}: \$\{modelLabel\}\./);
+  assert.match(composerSource, /ariaLabel=\{\`\$\{t\("chat\.model"\)\}:/);
+  assert.match(composerSource, /\$\{modelLabel\}\. \$\{t\("chat\.reasoningLevel"\)\}:/);
   assert.match(composerSource, /className=\"composer-model-thinking-chevron\"/);
   assert.match(composerSource, /ContextUsageInspector/);
   assert.match(composerSource, /composer-plugin-transform-btn/);

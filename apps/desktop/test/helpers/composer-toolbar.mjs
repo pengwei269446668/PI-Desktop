@@ -5,7 +5,6 @@
  */
 import { createElement } from "react";
 
-const USAGE = { inputTokens: 1_000, outputTokens: 200, totalTokens: 1_200 };
 const noop = () => {};
 const idle = async () => {};
 const unavailable = async () => ({
@@ -51,7 +50,6 @@ export const TOOLBAR_PROPS = {
   },
   modelLabel: "Model",
   thinkingLabel: "Off",
-  contextUsage: { usage: USAGE, turnUsage: USAGE, contextWindow: 200_000, tools: [] },
   value: "",
   modelReady: true,
   sendBlocked: false,
