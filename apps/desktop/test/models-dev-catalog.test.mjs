@@ -536,21 +536,29 @@ test("gemini agent routes do not collapse to gemini latest catalog entries", asy
   );
 });
 
-test("catalog lookup never collapses reasoning or release suffix variants", async (t) => {
+test("catalog lookup never collapses reasoning, mode or release suffix variants", async (t) => {
   const catalog = await loadFixtureCatalog(t);
   const exact = catalog.findModel({ vendorKey: "custom", modelId: "proxy/claude-opus-4.6" });
   assert.equal(exact?.modelId, "claude-opus-4.6");
   assert.equal(exact.reasoning, true);
 
+  /* Semantic variants stay distinct models: a thinking/agent branch, a
+     colon-spelled mode, and a vendor-dash prefix are not the base model. */
   for (const modelId of [
     "proxy/claude-opus-4.6-thinking",
     "proxy/claude-opus-4.6-agent",
-    "proxy/claude-opus-4.6-latest",
     "claude-opus-4.6:thinking",
     "anthropic-claude-opus-4.6",
   ]) {
     assert.equal(catalog.findModel({ vendorKey: "custom", modelId }), undefined, modelId);
   }
+
+  /* A service-tier token is not model identity. `-latest` names the same
+     published model, so an unanchored row reaches the vendor's own record
+     (D655) instead of dropping to the generic shape. */
+  const latest = catalog.findModel({ vendorKey: "custom", modelId: "proxy/claude-opus-4.6-latest" });
+  assert.equal(latest?.modelId, "claude-opus-4.6");
+  assert.equal(latest.limit.context, 1_000_000);
 });
 
 /*
@@ -696,9 +704,10 @@ test("a majority of publishers with conflicting capability signatures stays unma
   }), undefined);
 });
 
-test("conflicting reseller and shipped records for a leaf stay unmatched without an official", async (t) => {
-  // deepseek is not an official/source family for #1047 disambiguation, and the
-  // capability signatures conflict, so an unanchored relay must miss.
+test("conflicting reseller and shipped records enrich when an official publisher is present", async (t) => {
+  // deepseek is an official/source family for #1047 disambiguation. With a
+  // unique official publisher the lookup returns its record directly, so the
+  // reseller conflict is resolved in favor of the official.
   const catalog = await loadFixtureCatalog(t, {
     gateway: { api: "https://gateway.example/v1", models: {} },
     deepseek: { models: { "shared-model": {
@@ -711,11 +720,16 @@ test("conflicting reseller and shipped records for a leaf stay unmatched without
       id: "shared-model", tool_call: false, limit: { context: 131_072, output: 8_192 },
     } } },
   });
-  assert.equal(catalog.findModel({
+  const match = catalog.findModel({
     vendorKey: "custom",
     baseUrl: "https://relay.example/v1",
     modelId: "shared-model",
-  }), undefined);
+  });
+  // Unique official (deepseek) wins — its record is returned directly.
+  assert.ok(match !== undefined);
+  assert.equal(match.toolCall, true);
+  assert.equal(match.limit.context, 1_000_000);
+  assert.equal(match.limit.output, 393_216);
 });
 
 test("resellers still answer for an id no shipped publisher states", async (t) => {
@@ -805,9 +819,10 @@ test("a shipped publisher answers first for a row anchored to a reseller", async
   assert.equal(match.limit.output, 500_000);
 });
 
-test("ambiguous same-leaf spellings with conflicting modalities stay unmatched", async (t) => {
+test("ambiguous same-leaf spellings with conflicting modalities enrich via official when present", async (t) => {
   // `mimo-v2.5` and `XiaomiMiMo/MiMo-V2.5` share a case-insensitive leaf but
-  // disagree on modalities, and neither publisher is an official/source family.
+  // disagree on modalities. xiaomi is an official/source family, so its own
+  // record answers for the relay row instead of the two staying unmatched.
   const catalog = await loadFixtureCatalog(t, {
     gateway: { api: "https://gateway.example/v1", models: {} },
     xiaomi: { models: { "mimo-v2.5": {
@@ -821,11 +836,16 @@ test("ambiguous same-leaf spellings with conflicting modalities stay unmatched",
       limit: { context: 1_048_576, output: 131_072 },
     } } },
   });
-  assert.equal(catalog.findModel({
+  const match = catalog.findModel({
     vendorKey: "custom",
     baseUrl: "https://relay.example/v1",
     modelId: "mimo-v2.5",
-  }), undefined);
+  });
+  // xiaomi is official, so its own record answers for the relay row.
+  assert.ok(match !== undefined);
+  assert.equal(match.modelId, "mimo-v2.5");
+  assert.equal(match.limit.context, 1_048_576);
+  assert.equal(match.limit.output, 131_072);
 });
 
 test("unique leaf enrichment coexists with exact-id borrowing and unknown misses", async (t) => {
@@ -1817,7 +1837,7 @@ test("a custom endpoint on a uniquely published host inherits that publisher", a
   );
 });
 
-test("a host two publishers share leaves conflicting leaves unmatched", async (t) => {
+test("a known vendor family answers a shared host, an unnamed family does not", async (t) => {
   const catalog = await loadFixtureCatalog(t, {
     alpha: {
       api: "https://shared.example/api/paas/v4",
@@ -1827,11 +1847,33 @@ test("a host two publishers share leaves conflicting leaves unmatched", async (t
       api: "https://shared.example/api/coding/v4",
       models: { "glm-5.3": { id: "glm-5.3", reasoning: false, limit: { context: 32_000 } } },
     },
+    gamma: {
+      api: "https://shared.example/api/other/v4",
+      models: { "acme-widget-9": { id: "acme-widget-9", tool_call: true, limit: { context: 65_536 } } },
+    },
+    delta: {
+      api: "https://shared.example/api/legacy/v4",
+      models: { "acme-widget-9": { id: "acme-widget-9", tool_call: false, limit: { context: 32_768 } } },
+    },
   });
-  assert.equal(catalog.findModel({
+
+  /* `glm` is a vendor family, so an unanchored row reaches its representative
+     (D655) instead of the generic shape. The publishers here all tie at the
+     reseller tier, so the deterministic order decides — and it is the value
+     both callers see, never one row's private pick. */
+  const glm = catalog.findModel({
     vendorKey: "custom",
     baseUrl: "https://shared.example/v1",
     modelId: "glm-5.3",
+  });
+  assert.ok(glm, "a vendor family must answer for an unanchored row");
+  assert.equal(glm.limit.context, 32_000);
+  /* A family with no vendor identity is still refused: no publisher of it
+     speaks for the model. */
+  assert.equal(catalog.findModel({
+    vendorKey: "custom",
+    baseUrl: "https://shared.example/v1",
+    modelId: "acme-widget-9",
   }), undefined);
   // Naming the publisher still resolves it to that publisher's own record.
   const alpha = catalog.findModel({
@@ -1841,4 +1883,62 @@ test("a host two publishers share leaves conflicting leaves unmatched", async (t
   });
   assert.equal(alpha?.providerKey, "alpha");
   assert.equal(alpha?.limit.context, 1_000_000);
+});
+
+/*
+  D655 family-key matching.
+
+  A relay spells a published model its own way, so the exact last-segment
+  matcher misses and the whole row list used to stay on the generic 128k / 8k /
+  text-only shape. The family key folds separator and service-tier differences
+  only; it must never absorb a version, a mode variant, or an unrelated name.
+*/
+test("family punctuation and service tiers resolve while versions stay distinct", async (t) => {
+  const catalog = await loadFixtureCatalog(t, {
+    zai: { models: {
+      "glm-5.1": { id: "glm-5.1", tool_call: true, limit: { context: 200_000, output: 131_072 } },
+      "glm-5.3": { id: "glm-5.3", tool_call: true, limit: { context: 1_000_000, output: 131_072 } },
+    } },
+  });
+
+  // `.` and `-` are the same version separator for the same published record.
+  const dotted = catalog.findModel({ vendorKey: "custom", modelId: "glm-5.1" });
+  assert.equal(dotted?.modelId, "glm-5.1");
+  assert.equal(dotted.limit.context, 200_000);
+
+  // A service tier is not model identity.
+  const tiered = catalog.findModel({ vendorKey: "custom", modelId: "glm-5.1-latest" });
+  assert.equal(tiered?.modelId, "glm-5.1");
+
+  // A different version is a different model and must never inherit a sibling's
+  // limits, even though it is the same family.
+  const other = catalog.findModel({ vendorKey: "custom", modelId: "glm-5.3" });
+  assert.equal(other?.modelId, "glm-5.3");
+  assert.equal(other.limit.context, 1_000_000);
+});
+
+test("a family only unrelated resellers carry stays unmatched", async (t) => {
+  const catalog = await loadFixtureCatalog(t, {
+    resellerA: { models: { "obscure-family-7": { id: "obscure-family-7", tool_call: true, limit: { context: 262_144 } } } },
+    resellerB: { models: { "obscure-family-7": { id: "obscure-family-7", tool_call: false, limit: { context: 8_192 } } } },
+  });
+  assert.equal(catalog.findModel({
+    vendorKey: "custom",
+    baseUrl: "https://relay.example/v1",
+    modelId: "obscure-family-7",
+  }), undefined);
+});
+
+test("a vendor family answers from the vendor's own record over a platform copy", async (t) => {
+  const catalog = await loadFixtureCatalog(t, {
+    zai: { models: { "glm-5.3": { id: "glm-5.3", tool_call: true, limit: { context: 1_000_000, output: 131_072 } } } },
+    platform: { models: { "glm-5.3": { id: "glm-5.3", tool_call: true, limit: { context: 32_000, output: 8_192 } } } },
+  });
+  const match = catalog.findModel({
+    vendorKey: "custom",
+    baseUrl: "https://relay.example/v1",
+    modelId: "glm-5.3",
+  });
+  assert.equal(match?.providerKey, "zai", "the vendor's own record represents the family");
+  assert.equal(match.limit.context, 1_000_000);
 });

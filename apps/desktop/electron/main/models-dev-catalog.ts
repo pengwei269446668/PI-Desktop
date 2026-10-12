@@ -886,6 +886,247 @@ export function catalogModelConfigFor(
 
 type IndexedModel = { model: ModelsDevModel; provider: ModelsDevProvider };
 
+/* ---------------------------------------------------------------------------
+   Family-key identity (ported from PiDeck's modelCapabilityMatch).
+
+   models.dev and a relay often spell one model differently: the relay serves
+   `deepseek-v4.1-flash` while the published records use `deepseek-v4-1-flash`,
+   or it appends a service tier (`-free`, `:batch`). The exact last-segment
+   matcher above deliberately refuses those spellings, which left whole relay
+   lists on the generic 128k / 8k / text-only shape.
+
+   The rules below are the ones PiDeck proved out across its own corpus:
+
+   - `normalizeFamilyIdentity` folds every non-alphanumeric run to a single `-`
+     and lowercases, so punctuation differences between spellings disappear.
+   - `modelFamilyKey` then drops trailing *service tier* tokens only. Version
+     numbers are never removed, so `gpt-5` and `gpt-5.6`, `glm-5` and
+     `glm-5.1`, and `deepseek-v4-flash` and `deepseek-v4.1-flash` stay distinct
+     families.
+   - `familyVendorTier` ranks how official a candidate is for that family so the
+     representing record is the vendor's own, not an aggregator's.
+
+   This is a *fallback* used only when the exact matcher has already failed.
+   --------------------------------------------------------------------------- */
+
+/** Service-tier / routing decorations that carry no model identity. */
+const SERVICE_TIER_TOKENS: ReadonlySet<string> = new Set([
+  "free",
+  "latest",
+  "batch",
+  "online",
+  "proxy",
+  "beta",
+]);
+
+/** Fold a spelling to a comparable identity: lowercase, single `-` separators. */
+function normalizeFamilyIdentity(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** Path tail of an id: `deepseek-ai/DeepSeek-V4.1-Flash` → `DeepSeek-V4.1-Flash`. */
+function modelIdTail(modelId: string): string {
+  const trimmed = modelId.trim();
+  const slash = trimmed.lastIndexOf("/");
+  return slash >= 0 && slash < trimmed.length - 1 ? trimmed.slice(slash + 1) : trimmed;
+}
+
+/**
+ * Family key: path tail, normalized, with trailing service-tier tokens removed.
+ * Version components are preserved, so distinct releases stay distinct.
+ */
+function modelFamilyKey(value: string): string {
+  const tokens = normalizeFamilyIdentity(modelIdTail(value)).split("-").filter(Boolean);
+  while (tokens.length > 1 && SERVICE_TIER_TOKENS.has(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+  return tokens.join("-");
+}
+
+/**
+ * Family head token → the providers that publish that family themselves.
+ *
+ * Needed because a platform's record for a family often carries its own SKU
+ * limits, while a relay serves the vendor's standard API. Vendors whose name is
+ * already the family head (`deepseek` → `deepseek-v4-pro`) do not need an
+ * entry — the prefix rule in `familyVendorTier` covers them.
+ */
+const FAMILY_VENDOR_PROVIDERS: Readonly<Record<string, readonly string[]>> = {
+  gpt: ["openai"],
+  o1: ["openai"],
+  o3: ["openai"],
+  o4: ["openai"],
+  claude: ["anthropic"],
+  gemini: ["google", "google-vertex"],
+  gemma: ["google"],
+  glm: ["zai", "zai-coding-cn"],
+  kimi: ["moonshotai", "moonshotai-cn"],
+  mimo: ["xiaomi", "xiaomi-token-plan-cn"],
+  minimax: ["minimax", "minimax-cn"],
+  qwen: ["alibaba", "alibaba-cn", "dashscope"],
+  grok: ["xai"],
+  llama: ["meta"],
+  mistral: ["mistral"],
+  nemotron: ["nvidia"],
+  nova: ["amazon-bedrock"],
+  deepseek: ["deepseek"],
+};
+
+function familyHead(familyKey: string): string {
+  return familyKey.split("-").filter(Boolean)[0] ?? "";
+}
+
+/**
+ * Whether a family is one whose records this app can trust at all.
+ *
+ * The family read exists to survive a relay's own spelling of a *vendor* model,
+ * not to average arbitrary names. A family qualifies when
+ *
+ * - its head names a vendor family we know (option C of the port), or
+ * - some publisher of that family is itself the family head
+ *   (`deepseek` publishing `deepseek-v4-pro`), or
+ * - some publisher keeps the vendor's namespace in the id
+ *   (`deepinfra`'s `deepseek-ai/DeepSeek-V4.1-Flash`).
+ *
+ * A family only unrelated resellers carry — or a synthetic `Vendor/Disputed` —
+ * fails this gate and keeps the exact-match rules above, so an unnamed row
+ * never asserts an unrelated deployment's capabilities.
+ */
+function isTrustedVendorFamily(
+  familyKey: string,
+  entries: readonly IndexedModel[],
+): boolean {
+  if (!familyKey) return false;
+  if (FAMILY_VENDOR_PROVIDERS[familyHead(familyKey)]) return true;
+  return entries.some(({ model }) => familyVendorTier(model, familyKey) >= 1);
+}
+
+/**
+ * How official a candidate is for this family.
+ *
+ * 3 = the vendor's own record; 2 = the provider name is the family head
+ * (`deepseek` publishes `deepseek-v4-pro`); 1 = an upstream mirror that keeps
+ * the vendor namespace (`openrouter`'s `deepseek/…`); 0 = aggregator/reseller.
+ */
+function familyVendorTier(model: ModelsDevModel, familyKey: string): number {
+  const provider = normalizedProviderKey(model.providerKey);
+  const vendors = FAMILY_VENDOR_PROVIDERS[familyHead(familyKey)];
+  if (vendors?.includes(provider)) return 3;
+  if (provider && (familyKey === provider || familyKey.startsWith(`${provider}-`))) return 2;
+  const namespace = model.modelId.includes("/")
+    ? model.modelId.slice(0, model.modelId.lastIndexOf("/"))
+    : "";
+  const namespaceHead = normalizeFamilyIdentity(namespace).split("-").filter(Boolean)[0];
+  if (namespaceHead && (familyKey === namespaceHead || familyKey.startsWith(`${namespaceHead}-`))) {
+    return 1;
+  }
+  return 0;
+}
+
+/** Deterministic baseline order so "first" never depends on catalog order. */
+function sortedFamilyCandidates(entries: readonly IndexedModel[]): IndexedModel[] {
+  return [...entries].sort((left, right) => {
+    const providerDiff = left.provider.providerKey.localeCompare(right.provider.providerKey);
+    if (providerDiff) return providerDiff;
+    return left.model.modelId.localeCompare(right.model.modelId);
+  });
+}
+
+/** Most frequent value, ties broken deterministically (smaller number first). */
+function familyModeOf<T>(values: readonly (T | undefined)[], preferSmaller = false): T | undefined {
+  const counts = new Map<T, number>();
+  const order: T[] = [];
+  for (const value of values) {
+    if (value === undefined) continue;
+    if (!counts.has(value)) order.push(value);
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  let best: T | undefined;
+  let bestCount = 0;
+  for (const value of order) {
+    const count = counts.get(value) ?? 0;
+    if (count > bestCount) {
+      best = value;
+      bestCount = count;
+      continue;
+    }
+    if (
+      preferSmaller &&
+      count === bestCount &&
+      typeof value === "number" &&
+      typeof best === "number" &&
+      value < best
+    ) {
+      best = value;
+    }
+  }
+  return best;
+}
+
+/**
+ * The record that represents one family across publishers.
+ *
+ * Field roles follow PiDeck: the context window prefers what the vendor itself
+ * states (platform records often carry a private SKU's window) and falls back
+ * to the publishers' mode; the output limit and input modalities take the mode
+ * of agreeing publishers, because a vendor record commonly fills `max` with the
+ * context window itself and publishing that as an output cap would send
+ * over-limit requests upstream.
+ *
+ * The representative is the record agreeing with those values on the most
+ * fields, then the most official, then the most complete, then the
+ * deterministic order — so the same catalog always yields the same answer.
+ */
+function familyRepresentative(entries: readonly IndexedModel[]): ModelsDevModel | undefined {
+  if (entries.length === 0) return undefined;
+  /* A family whose head is a known vendor family is answered even when every
+     publisher of it is a reseller (option C of D655): `gemini-3-flash` is only
+     listed by platforms, yet it is still Gemini, and leaving the row on the
+     generic 128k shape hides a window the catalog does publish. A family with
+     no vendor identity at all — a synthetic `Vendor/Disputed`, or one only
+     unrelated resellers carry — is still refused, so an unnamed row never
+     asserts an arbitrary deployment's capabilities. */
+  const knownVendorFamily = FAMILY_VENDOR_PROVIDERS[familyHead(modelFamilyKey(entries[0].model.modelId))] !== undefined;
+  if (
+    !knownVendorFamily &&
+    !entries.some(({ model }) => familyVendorTier(model, modelFamilyKey(model.modelId)) >= 1)
+  ) {
+    return undefined;
+  }
+  const ordered = sortedFamilyCandidates(entries);
+  const modeContext = familyModeOf(ordered.map(({ model }) => model.limit.context), true);
+  const modeOutput = familyModeOf(ordered.map(({ model }) => model.limit.output), true);
+  const modeInput = familyModeOf(
+    ordered.map(({ model }) => [...model.modalities.input].sort().join("+")),
+  );
+  const vendorContext = familyModeOf(
+    ordered
+      .filter(({ model }) => familyVendorTier(model, modelFamilyKey(model.modelId)) >= 2)
+      .map(({ model }) => model.limit.context),
+    true,
+  );
+  const preferredContext = vendorContext ?? modeContext;
+  const agreement = ({ model }: IndexedModel): number =>
+    Number(model.limit.context !== undefined && model.limit.context === preferredContext) +
+    Number(model.limit.output !== undefined && model.limit.output === modeOutput) +
+    Number([...model.modalities.input].sort().join("+") === modeInput);
+  return [...ordered].sort((left, right) => {
+    const agreementDiff = agreement(right) - agreement(left);
+    if (agreementDiff) return agreementDiff;
+    const tierDiff =
+      familyVendorTier(right.model, modelFamilyKey(right.model.modelId)) -
+      familyVendorTier(left.model, modelFamilyKey(left.model.modelId));
+    if (tierDiff) return tierDiff;
+    const providerDiff = left.provider.providerKey.localeCompare(right.provider.providerKey);
+    if (providerDiff) return providerDiff;
+    return left.model.modelId.localeCompare(right.model.modelId);
+  })[0].model;
+}
+
 /**
  * Per-generation candidate index built from a loaded catalog. Bounding the
  * lookup by the number of distinct model ids in the catalog (not by the number
@@ -961,7 +1202,7 @@ function lookupCandidateKeys(requested: string): string[] {
 
 const EMPTY_CANDIDATES: readonly IndexedModel[] = [];
 
-type OfficialProviderFamily = "anthropic" | "openai" | "google" | "xai";
+type OfficialProviderFamily = "anthropic" | "openai" | "google" | "xai" | "deepseek" | "xiaomi" | "minimax" | "moonshotai" | "zai";
 
 const OFFICIAL_PROVIDER_FAMILIES: Readonly<Record<string, OfficialProviderFamily>> = {
   anthropic: "anthropic",
@@ -971,6 +1212,11 @@ const OFFICIAL_PROVIDER_FAMILIES: Readonly<Record<string, OfficialProviderFamily
   "google-vertex": "google",
   xai: "xai",
   "x-ai": "xai",
+  deepseek: "deepseek",
+  xiaomi: "xiaomi",
+  minimax: "minimax",
+  moonshotai: "moonshotai",
+  zai: "zai",
 };
 
 function explicitModelSourceFamily(modelId: string): OfficialProviderFamily | undefined {
@@ -1274,6 +1520,11 @@ export class ModelsDevCatalog {
   private lookupIndex: ModelsDevLookupIndex | undefined;
   /** Host → publishers, derived from the current provider map. */
   private hostIndex: Map<string, ModelsDevProvider[]> | undefined;
+  /**
+   * Family key → every publisher's record for that family, built lazily from
+   * the current provider map. Only the exact-match fallback reads it.
+   */
+  private familyIndex: Map<string, IndexedModel[]> | undefined;
   private readonly lookupMemo = new Map<string, ModelsDevModel | undefined>();
   private loadPromise: Promise<boolean> | undefined;
   private loaded = false;
@@ -1336,6 +1587,7 @@ export class ModelsDevCatalog {
         // Replacing the provider map invalidates the derived lookup index.
         this.lookupIndex = undefined;
         this.hostIndex = undefined;
+        this.familyIndex = undefined;
         this.lookupMemo.clear();
         this.loaded = true;
         this.source = "bundled";
@@ -1378,6 +1630,7 @@ export class ModelsDevCatalog {
         // Replacing the provider map invalidates the derived lookup index.
         this.lookupIndex = undefined;
         this.hostIndex = undefined;
+        this.familyIndex = undefined;
         this.lookupMemo.clear();
         this.loaded = true;
         this.source = "remote";
@@ -1498,6 +1751,34 @@ export class ModelsDevCatalog {
     return bucket?.length === 1 ? bucket[0] : undefined;
   }
 
+  /**
+   * Every publisher's record for the family this id belongs to.
+   *
+   * Read only after the exact matcher has already failed, so an id the catalog
+   * publishes under its own spelling is never reached through this path. Built
+   * lazily from the current provider map and cleared with the lookup index, so
+   * it can never describe a previous catalog generation.
+   */
+  private familyEntries(modelId: string): readonly IndexedModel[] {
+    if (!this.familyIndex) {
+      const index = new Map<string, IndexedModel[]>();
+      for (const provider of this.providers.values()) {
+        for (const model of provider.models) {
+          const key = modelFamilyKey(model.modelId);
+          if (!key) continue;
+          const bucket = index.get(key);
+          if (bucket) bucket.push({ model, provider });
+          else index.set(key, [{ model, provider }]);
+        }
+      }
+      this.familyIndex = index;
+    }
+    const key = modelFamilyKey(modelId);
+    if (!key) return EMPTY_CANDIDATES;
+    const entries = this.familyIndex.get(key) ?? EMPTY_CANDIDATES;
+    return isTrustedVendorFamily(key, entries) ? entries : EMPTY_CANDIDATES;
+  }
+
   findModel(input: CatalogTarget): ModelsDevModel | undefined {
     if (input.providerId && this.removedAccounts.has(input.providerId)) return undefined;
     const requested = normalizedModelId(input.modelId);
@@ -1536,13 +1817,21 @@ export class ModelsDevCatalog {
       right.score - left.score || left.model.modelId.length - right.model.modelId.length,
     );
     // 0 → unmatched; 1 → enrich; ≥2 prefer unique official/source provider
-    // agreeing with model source; else shared identical capabilities; else unmatched.
+    // agreeing with model source; several official/source records that agree
+    // describe the model too, while a reseller set must still not decide it;
+    // else shared identical capabilities; else unmatched.
     const official = candidates.filter(isOfficialSourceProvider);
     const result = candidates.length === 1
       ? candidates[0].model
       : official.length === 1
         ? official[0].model
-        : modelWithSharedCapabilities(candidates.map(({ model }) => model));
+        /* Google publishes an id from both `google` and `google-vertex`, so the
+           official set is the vendors' own answer and not one publisher's
+           claim about another. It is read exactly like the deployment-marker
+           path below reads it: only when those records agree. */
+        : official.length > 1
+          ? modelWithSharedCapabilities(official.map(({ model }) => model))
+          : modelWithSharedCapabilities(candidates.map(({ model }) => model));
     const deploymentFallback = result
       ? undefined
       : this.modelForDeploymentMarker(input.modelId, preferredProvider);
@@ -1557,9 +1846,19 @@ export class ModelsDevCatalog {
        prove nothing about identity, and an unknown endpoint keeps the existing
        behaviour: a unique unambiguous match, official disambiguation, shared
        capabilities, or nothing. Deployment-marker / variant-suffix fallbacks
-       are intentionally not applied here (approved #1047 matching rules). */
+       are intentionally not applied here (approved #1047 matching rules).
+
+       The one addition is the family-key read below. A relay spells an id its
+       own way (`deepseek-v4.1-flash` for `deepseek-v4-1-flash`, `-free` for a
+       paid tier), so nothing above ever matched and the whole row list stayed on
+       the generic shape. Reading the family is still *not* a free-for-all: the
+       key keeps every version component, so `gpt-5` cannot answer for `gpt-5.6`,
+       and the representative comes from the vendor's own record first. It runs
+       only for an unanchored row, after every rule above has already missed. */
     const borrowed = result ?? deploymentFallback ??
-      (preferredProvider ? this.borrowedAcrossProviders(input) : undefined);
+      (preferredProvider
+        ? this.borrowedAcrossProviders(input)
+        : familyRepresentative(this.familyEntries(requested)));
     // Cache the result (a miss included) so a repeated miss is also O(1) and
     // cannot grow the candidate index with query-dependent keys.
     this.lookupMemo.set(memoKey, borrowed);

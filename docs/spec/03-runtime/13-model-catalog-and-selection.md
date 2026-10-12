@@ -509,16 +509,46 @@ thinking ladder for explicit manual opt-in.
 
 The Pi adapter preserves the configured wire ID. Unknown endpoints may attach
 metadata from an exact, case-insensitive final `/` segment. A unique official
-publisher compatible with the ID family wins; conflicting capability/thinking
-candidates remain unknown. Exact served IDs are checked first. Only a narrow
+publisher compatible with the ID family wins; several official/source records
+that agree describe the model too; conflicting capability/thinking candidates
+otherwise remain unknown. Exact served IDs are checked first. Only a narrow
 whitelist of deployment-added environment/context labels (for example `-test`
 and `-1m`) may be removed as a fallback to a published base ID. Thinking,
-preview, and dated-release suffixes are not stripped, and spelling is never
-fuzzy-corrected.
+preview, and dated-release suffixes are not stripped.
+
+When every rule above misses, an unanchored row may still be resolved through
+the model's **family key**: the final `/` segment, lowercased, with every run of
+non-alphanumeric characters folded to a single `-`, and trailing *service tier*
+tokens (`free`, `latest`, `batch`, `online`, `proxy`, `beta`) removed. That is
+what lets a relay's own spelling (`deepseek-v4.1-flash` for the published
+`deepseek-v4-1-flash`, `glm-5.1-latest` for `glm-5.1`) reach the published
+record instead of dropping the row to the generic shape.
+
+The family read is bounded on both sides:
+
+- Version components are never removed, so `gpt-5` and `gpt-5.6`, `glm-5` and
+  `glm-5.1`, and `deepseek-v4-flash` and `deepseek-v4.1-flash` stay distinct
+  models. Mode variants (`-thinking`, `:thinking`, `-agent`) are distinct too.
+- A family qualifies only when it is a known vendor family, when some publisher
+  of it *is* the family head (`deepseek` publishing `deepseek-v4-pro`), or when
+  some publisher keeps the vendor namespace in the ID
+  (`deepinfra`'s `deepseek-ai/DeepSeek-V4.1-Flash`). A family only unrelated
+  resellers carry, or a synthetic `Vendor/Disputed`, stays unmatched.
+
+The official/source families cover the vendors that own the model weights and
+ship as first-class presets: Anthropic, OpenAI, Google (including AI Studio and
+Vertex), xAI, DeepSeek, Xiaomi/MiMo, MiniMax, Moonshot AI (Kimi), Alibaba
+(Qwen), Mistral, Meta, NVIDIA and Z.ai. A relay that serves one of their IDs
+therefore resolves to that vendor's own record rather than staying unmatched.
+Within one family the representative is the record the vendor itself publishes
+when there is one; context window, output limit and input modalities are taken
+from the publishers' agreeing values (context preferring the vendor's own
+stated value, ties resolved toward the smaller number so an enriched row can
+only under-claim), and the representative is chosen deterministically.
 
 Known provider lookup and aliases stay authoritative. An ambiguous known
-same-endpoint miss does not borrow from arbitrary publishers. There is no
-majority-vote capability or median-limit algorithm. Unmatched IDs use conservative
+same-endpoint miss does not borrow from arbitrary publishers, and no publisher
+outside the family gate above is averaged. Unmatched IDs use conservative
 generic metadata and explicit binding overrides.
 
 ## 12. Refresh strategy

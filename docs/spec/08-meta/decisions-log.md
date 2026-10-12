@@ -7600,3 +7600,47 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
 - Covered by `apps/desktop/test/session-title-prompt-fallback.test.mjs`,
   `apps/desktop/test/queue-pending-actions.test.mjs`, the host-core
   `derive_session_title` tests, and E2E-021a. See ADR 0323.
+
+## 2026-10-12 — Relay IDs resolve through a bounded family key (D655)
+
+- Extend the official/source provider families used by #1047 disambiguation to
+  every vendor that owns its model weights and ships as a first-class preset:
+  DeepSeek, Xiaomi/MiMo, MiniMax, Moonshot AI (Kimi), Alibaba (Qwen), Mistral,
+  Meta, NVIDIA and Z.ai beside the existing Anthropic, OpenAI, Google (with AI
+  Studio/Vertex) and xAI. Several official/source records that agree now answer
+  together as well, so an ID published from both `google` and `google-vertex`
+  (`gemini-3.5-flash`) resolves instead of staying unmatched.
+- Without those families a relay row for `deepseek-v4-flash`, `mimo-v2.5-pro`,
+  `glm-5`, `kimi-k3` or `MiniMax-M2.5` had no official candidate, so its many
+  conflicting reseller copies left the row on the generic 128k / 8k / text-only
+  shape and hid the published context window, output limit, modalities and
+  reasoning metadata. With the family present the unique-official rule answers
+  from the vendor's own record.
+- Refine D630 for the remaining relay spellings. When every exact rule misses,
+  an unanchored row resolves through the model's *family key*: the final `/`
+  segment, lowercased, with each run of non-alphanumeric characters folded to
+  one `-` and trailing service-tier tokens (`free`, `latest`, `batch`, `online`,
+  `proxy`, `beta`) removed. This is what reaches a published record for
+  `deepseek-v4.1-flash` (published `deepseek-v4-1-flash`), `claude-opus-4.7`
+  (published `claude-opus-4-7`) and `glm-5.1-latest`. It supersedes D630's
+  blanket "spelling is never fuzzy-corrected" for punctuation and service tiers
+  only.
+- The family read stays bounded, which is what keeps D630's substance. Version
+  components are never removed, so `gpt-5` cannot answer for `gpt-5.6`, `glm-5`
+  for `glm-5.1`, or `deepseek-v4-flash` for `deepseek-v4.1-flash`; mode variants
+  (`-thinking`, `:thinking`, `-agent`) stay distinct. A family qualifies only
+  when it is a known vendor family, when a publisher of it *is* the family head
+  (`deepseek` publishing `deepseek-v4-pro`), or when a publisher keeps the
+  vendor namespace in the ID (`deepinfra`'s `deepseek-ai/DeepSeek-V4.1-Flash`);
+  a family only unrelated resellers carry, or a synthetic `Vendor/Disputed`,
+  stays unmatched. Within a family the vendor's own record represents it,
+  context prefers the vendor's stated value with ties resolved smaller, and the
+  choice is deterministic. `unanchoredConsensus` stays unreachable, and no
+  majority-vote path is added for a known-provider row.
+- Metadata projection only: no wire ID, stored binding, host protocol, schema or
+  credential change. Coverage on the bundled snapshot rises from 78% to 90% of
+  distinct leaf ids under an unknown relay endpoint, and the previously
+  unmatched `gemini-3.8-flash` / `claude-sonnet-5.5` / `mimo-v2.6-pro` rows now
+  report their published limits. See `03-runtime/13-model-catalog-and-selection.md`
+  §11.3.1 and `apps/desktop/test/models-dev-catalog.test.mjs`,
+  `apps/desktop/test/provider-endpoint-metadata.test.mjs`.

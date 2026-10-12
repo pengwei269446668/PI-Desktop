@@ -311,6 +311,42 @@ Composer 模型列表中的上下文窗口标签通过 `effectiveContextWindow` 
    vision-capable model receives images within the 10 MB app-side inline
    bound as transient image blocks; other cases receive a safe `@path`.
 
+### 11.3 设置中新增模型的元数据
+
+Pi 适配器保留已配置的 wire ID。未知端点可以按大小写不敏感的最后一个 `/` 段
+附加元数据。唯一且与 ID 族相符的官方发布方胜出；多个彼此一致的官方/源记录同样
+描述该模型；其余能力/思考能力冲突的候选保持未知。先检查精确提供的 ID。仅有一份
+很窄的白名单部署标签（例如 `-test` 与 `-1m`）可以作为回退去掉以命中已发布的基础
+ID；thinking、preview 与带日期的发布后缀不会被裁掉。
+
+当上述规则全部未命中时，未锚定的行仍可通过模型的**家族键**解析：取最后一个 `/`
+段、转小写、把每段非字母数字字符折叠为单个 `-`，并去掉尾部的*服务档位* token
+（`free`、`latest`、`batch`、`online`、`proxy`、`beta`）。这正是中转自己的拼写
+（`deepseek-v4.1-flash` 对应已发布的 `deepseek-v4-1-flash`，`glm-5.1-latest`
+对应 `glm-5.1`）能够命中已发布记录、而不是让整行退回通用形态的原因。
+
+家族读取在两侧都受限：
+
+- 版本组件永不被去掉，因此 `gpt-5` 与 `gpt-5.6`、`glm-5` 与 `glm-5.1`、
+  `deepseek-v4-flash` 与 `deepseek-v4.1-flash` 仍是不同模型；模式变体
+  （`-thinking`、`:thinking`、`-agent`）同样是不同模型。
+- 仅当某家族是已知厂商家族、或该家族的某个发布方本身就是家族头
+  （`deepseek` 发布 `deepseek-v4-pro`）、或某个发布方在 ID 中保留厂商命名空间
+  （`deepinfra` 的 `deepseek-ai/DeepSeek-V4.1-Flash`）时，该家族才被采信。仅由
+  无关转售商承载的家族，或合成的 `Vendor/Disputed`，保持未匹配。
+
+官方/源族涵盖拥有模型权重并以一等预设形式随应用发布的厂商：Anthropic、
+OpenAI、Google（含 AI Studio 与 Vertex）、xAI、DeepSeek、Xiaomi/MiMo、
+MiniMax、Moonshot AI (Kimi)、Alibaba (Qwen)、Mistral、Meta、NVIDIA 与 Z.ai。
+因此中转服务提供这些厂商的 ID 时，会解析到该厂商自己的记录，而不是保持未匹配。
+同一家族内的代表条目优先取厂商自己发布的记录；上下文窗口、输出上限与输入模态取自
+发布方一致的值（上下文优先取厂商自己声明的值，并列时取较小值，使富化后的行只会
+低报），且代表条目的选取是确定性的。
+
+已知提供商查找与别名保持权威。已知同端点未命中且含义不明确时，不会向任意发布方
+借用，也不会对上述家族门禁之外的任何发布方取平均。未匹配的 ID 使用保守的通用
+元数据以及显式绑定覆盖。
+
 ## 12. 刷新策略
 
 - settings/model 选择器中的手动刷新按钮

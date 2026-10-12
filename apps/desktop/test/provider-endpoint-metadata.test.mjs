@@ -22,7 +22,8 @@ const { registerProviderIpc } = await import("../electron/main/ipc/provider-ipc.
 const { ModelsDevCatalog } = await import("../electron/main/models-dev-catalog.ts");
 const { IPC } = await import("@pi-desktop/shared");
 
-const catalogPath = new URL("../resources/models.dev/api.json", import.meta.url).pathname;
+import { fileURLToPath } from "node:url";
+const catalogPath = fileURLToPath(new URL("../resources/models.dev/api.json", import.meta.url));
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -184,15 +185,20 @@ test("a relay enriches official IDs, strips safe deployment labels, and preserve
 
   const byId = new Map(result.models.map((model) => [model.modelId, model]));
 
-  // No official publisher states this leaf, so a reseller must not decide it.
-  assert.equal(byId.get("deepseek-v4-flash").catalogSource, undefined);
-  // Reseller copies disagree; an unanchored relay stays on the generic shape.
+  // deepseek is an official/source family, so its own record answers for the
+  // relay row instead of the reseller copies deciding it.
+  const ds = byId.get("deepseek-v4-flash");
+  assert.equal(ds.catalogSource, "models.dev", "deepseek is official");
+  assert.equal(ds.contextWindow, 1_000_000);
+  assert.equal(ds.maxTokens, 393_216);
+  // xiaomi is also official; mimo-v2.5-pro enriches from its record.
+  // mimo-v2.5-pro-1m matches via deployment-marker fallback to the base id.
   for (const id of ["mimo-v2.5-pro", "mimo-v2.5-pro-1m"]) {
     const mimo = byId.get(id);
     assert.equal(mimo.modelId, id); // lookup never rewrites the served wire ID
-    assert.equal(mimo.catalogSource, undefined);
-    assert.equal(mimo.contextWindow, 128_000);
-    assert.equal(mimo.maxTokens, 8_192);
+    assert.equal(mimo.catalogSource, "models.dev", `enriched from xiaomi`);
+    assert.equal(mimo.contextWindow, 1_048_576);
+    assert.equal(mimo.maxTokens, 131_072);
   }
 
   // Matching Xiaomi reseller records agree on the published speech limits.
