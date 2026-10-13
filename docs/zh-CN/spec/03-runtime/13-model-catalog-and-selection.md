@@ -331,13 +331,16 @@ ID；thinking、preview 与带日期的发布后缀不会被裁掉。
   `deepseek-v4-flash` 与 `deepseek-v4.1-flash` 仍是不同模型；模式变体
   （`-thinking`、`:thinking`、`-agent`）同样是不同模型。
 - 仅当某家族是已知厂商家族、或该家族的某个发布方本身就是家族头
-  （`deepseek` 发布 `deepseek-v4-pro`）、或某个发布方在 ID 中保留厂商命名空间
-  （`deepinfra` 的 `deepseek-ai/DeepSeek-V4.1-Flash`）时，该家族才被采信。仅由
+  （`deepseek` 发布 `deepseek-v4-pro`）、或某个发布方在 ID 中保留厂商
+  （`deepinfra` 的 `deepseek-ai/DeepSeek-V4.1-Flash`、`tencent-token-plan`
+  对应 `hy3`）时，该家族才被采信。厂商映射以家族*词干*为键，因此每个厂商只需一条
+  记录即可覆盖其全部代际（`qwen` 覆盖 `qwen3.8-max`，`hy` 覆盖 `hy3`）。仅由
   无关转售商承载的家族，或合成的 `Vendor/Disputed`，保持未匹配。
 
 官方/源族涵盖拥有模型权重并以一等预设形式随应用发布的厂商：Anthropic、
 OpenAI、Google（含 AI Studio 与 Vertex）、xAI、DeepSeek、Xiaomi/MiMo、
-MiniMax、Moonshot AI (Kimi)、Alibaba (Qwen)、Mistral、Meta、NVIDIA 与 Z.ai。
+MiniMax、Moonshot AI (Kimi)、Alibaba (Qwen)、Tencent (Hunyuan)、Mistral、Meta、
+NVIDIA 与 Z.ai。
 因此中转服务提供这些厂商的 ID 时，会解析到该厂商自己的记录，而不是保持未匹配。
 同一家族内的代表条目优先取厂商自己发布的记录；上下文窗口、输出上限与输入模态取自
 发布方一致的值（上下文优先取厂商自己声明的值，并列时取较小值，使富化后的行只会

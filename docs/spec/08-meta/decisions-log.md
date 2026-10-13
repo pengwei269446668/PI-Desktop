@@ -7605,11 +7605,15 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
 
 - Extend the official/source provider families used by #1047 disambiguation to
   every vendor that owns its model weights and ships as a first-class preset:
-  DeepSeek, Xiaomi/MiMo, MiniMax, Moonshot AI (Kimi), Alibaba (Qwen), Mistral,
-  Meta, NVIDIA and Z.ai beside the existing Anthropic, OpenAI, Google (with AI
-  Studio/Vertex) and xAI. Several official/source records that agree now answer
-  together as well, so an ID published from both `google` and `google-vertex`
-  (`gemini-3.5-flash`) resolves instead of staying unmatched.
+  DeepSeek, Xiaomi/MiMo, MiniMax, Moonshot AI (Kimi), Alibaba (Qwen), Tencent
+  (Hunyuan), Mistral, Meta, NVIDIA and Z.ai beside the existing Anthropic,
+  OpenAI, Google (with AI Studio/Vertex) and xAI. The map is keyed by a family
+  *stem*, so one entry serves a vendor's whole line — `qwen` covers
+  `qwen3.8-max`, `hy` covers `hy3` — and a vendor is recognized either through
+  its own provider key (`tencent-token-plan`) or through the namespace an
+  upstream mirror keeps (`tencent/Hy3`). Several official/source records that
+  agree now answer together as well, so an ID published from both `google` and
+  `google-vertex` (`gemini-3.5-flash`) resolves instead of staying unmatched.
 - Without those families a relay row for `deepseek-v4-flash`, `mimo-v2.5-pro`,
   `glm-5`, `kimi-k3` or `MiniMax-M2.5` had no official candidate, so its many
   conflicting reseller copies left the row on the generic 128k / 8k / text-only
@@ -7638,9 +7642,12 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
   choice is deterministic. `unanchoredConsensus` stays unreachable, and no
   majority-vote path is added for a known-provider row.
 - Metadata projection only: no wire ID, stored binding, host protocol, schema or
-  credential change. Coverage on the bundled snapshot rises from 78% to 90% of
+  credential change. Coverage on the bundled snapshot rises from 78% to 94% of
   distinct leaf ids under an unknown relay endpoint, and the previously
-  unmatched `gemini-3.8-flash` / `claude-sonnet-5.5` / `mimo-v2.6-pro` rows now
-  report their published limits. See `03-runtime/13-model-catalog-and-selection.md`
-  §11.3.1 and `apps/desktop/test/models-dev-catalog.test.mjs`,
+  unmatched `gemini-3.8-flash`, `claude-sonnet-5.5`, `mimo-v2.6-pro`, `hy3`,
+  `qwen3.8-max` and `qwen3.8-flash` rows now report their published limits.
+  An ID the snapshot does not publish under any spelling still stays unmatched
+  (`jev-1.13.0`, `kimi-k2.8-preview`). See
+  `03-runtime/13-model-catalog-and-selection.md` §11.3.1 and
+  `apps/desktop/test/models-dev-catalog.test.mjs`,
   `apps/desktop/test/provider-endpoint-metadata.test.mjs`.

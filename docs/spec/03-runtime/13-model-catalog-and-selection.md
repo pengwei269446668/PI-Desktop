@@ -524,6 +524,7 @@ what lets a relay's own spelling (`deepseek-v4.1-flash` for the published
 `deepseek-v4-1-flash`, `glm-5.1-latest` for `glm-5.1`) reach the published
 record instead of dropping the row to the generic shape.
 
+
 The family read is bounded on both sides:
 
 - Version components are never removed, so `gpt-5` and `gpt-5.6`, `glm-5` and
@@ -531,14 +532,18 @@ The family read is bounded on both sides:
   models. Mode variants (`-thinking`, `:thinking`, `-agent`) are distinct too.
 - A family qualifies only when it is a known vendor family, when some publisher
   of it *is* the family head (`deepseek` publishing `deepseek-v4-pro`), or when
-  some publisher keeps the vendor namespace in the ID
-  (`deepinfra`'s `deepseek-ai/DeepSeek-V4.1-Flash`). A family only unrelated
-  resellers carry, or a synthetic `Vendor/Disputed`, stays unmatched.
+  some publisher keeps the vendor in the ID (`deepinfra`'s
+  `deepseek-ai/DeepSeek-V4.1-Flash`, `tencent-token-plan` answering for `hy3`).
+  The vendor map is keyed by a family *stem*, so one entry serves every
+  generation of that vendor's models — `qwen` covers `qwen3.8-max`, `hy` covers
+  `hy3`. A family only unrelated resellers carry, or a synthetic
+  `Vendor/Disputed`, stays unmatched.
 
 The official/source families cover the vendors that own the model weights and
 ship as first-class presets: Anthropic, OpenAI, Google (including AI Studio and
 Vertex), xAI, DeepSeek, Xiaomi/MiMo, MiniMax, Moonshot AI (Kimi), Alibaba
-(Qwen), Mistral, Meta, NVIDIA and Z.ai. A relay that serves one of their IDs
+(Qwen), Tencent (Hunyuan), Mistral, Meta, NVIDIA and Z.ai. A relay that serves
+one of their IDs
 therefore resolves to that vendor's own record rather than staying unmatched.
 Within one family the representative is the record the vendor itself publishes
 when there is one; context window, output limit and input modalities are taken

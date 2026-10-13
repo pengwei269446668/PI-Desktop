@@ -968,6 +968,8 @@ const FAMILY_VENDOR_PROVIDERS: Readonly<Record<string, readonly string[]>> = {
   mimo: ["xiaomi", "xiaomi-token-plan-cn"],
   minimax: ["minimax", "minimax-cn"],
   qwen: ["alibaba", "alibaba-cn", "dashscope"],
+  hy: ["tencent"],
+  hunyuan: ["tencent"],
   grok: ["xai"],
   llama: ["meta"],
   mistral: ["mistral"],
@@ -1012,17 +1014,59 @@ function isTrustedVendorFamily(
  * (`deepseek` publishes `deepseek-v4-pro`); 1 = an upstream mirror that keeps
  * the vendor namespace (`openrouter`'s `deepseek/…`); 0 = aggregator/reseller.
  */
+/** Whether any leading token prefix of this id names a mapped vendor family. */
+function elementsNameVendorFamily(modelId: string): boolean {
+  const tokens = modelFamilyKey(modelId).split("-").filter(Boolean);
+  for (let end = tokens.length; end >= 1; end -= 1) {
+    if (FAMILY_VENDOR_PROVIDERS[tokens.slice(0, end).join("-")]) return true;
+  }
+  return false;
+}
+
+/** Whether a token names a vendor some family maps to (`tencent`, `alibaba`). */
+function familyNamesVendor(token: string): boolean {
+  if (!token) return false;
+  if (FAMILY_VENDOR_PROVIDERS[token]) return true;
+  for (const vendors of Object.values(FAMILY_VENDOR_PROVIDERS)) {
+    if (vendors.some((vendor) => vendor === token || token.startsWith(`${vendor}-`))) return true;
+  }
+  return false;
+}
+
 function familyVendorTier(model: ModelsDevModel, familyKey: string): number {
   const provider = normalizedProviderKey(model.providerKey);
-  const vendors = FAMILY_VENDOR_PROVIDERS[familyHead(familyKey)];
-  if (vendors?.includes(provider)) return 3;
-  if (provider && (familyKey === provider || familyKey.startsWith(`${provider}-`))) return 2;
-  const namespace = model.modelId.includes("/")
-    ? model.modelId.slice(0, model.modelId.lastIndexOf("/"))
-    : "";
-  const namespaceHead = normalizeFamilyIdentity(namespace).split("-").filter(Boolean)[0];
-  if (namespaceHead && (familyKey === namespaceHead || familyKey.startsWith(`${namespaceHead}-`))) {
-    return 1;
+  if (!provider) return 0;
+
+  /* The vendor list is keyed by a family *stem*, while a published family often
+     carries a generation suffix (`qwen3.8-max` under `qwen`, `hy3` under `hy`).
+     A provider counts as that vendor when its key equals the mapped name or
+     extends it, so `tencent-tokenhub` answers for `tencent`. */
+  const isVendor = (vendor: string, value: string): boolean =>
+    value === vendor || value.startsWith(`${vendor}-`);
+  const tokens = familyKey.split("-").filter(Boolean);
+  const stems = new Set<string>();
+  for (let end = tokens.length; end >= 1; end -= 1) stems.add(tokens.slice(0, end).join("-"));
+  /* A family often carries its generation inside the first token (`hy3` under
+     `hy`, `qwen3` under `qwen`), so a mapped stem may prefix that token. */
+  const head = tokens[0] ?? "";
+  for (let length = head.length; length >= 2; length -= 1) stems.add(head.slice(0, length));
+  for (const stem of stems) {
+    const vendors = FAMILY_VENDOR_PROVIDERS[stem];
+    if (vendors?.some((vendor) => isVendor(vendor, provider))) return 3;
+  }
+
+  // The provider name is itself the family head: `deepseek` → `deepseek-v4-pro`.
+  if (familyKey === provider || familyKey.startsWith(`${provider}-`)) return 2;
+
+  /* An upstream mirror keeps the vendor in its namespace (`tencent/Hy3`,
+     `deepseek-ai/DeepSeek-V4.1-Flash`), naming either the family itself or a
+     vendor we know. */
+  if (model.modelId.includes("/")) {
+    const namespace = normalizeFamilyIdentity(model.modelId.slice(0, model.modelId.lastIndexOf("/")));
+    if (namespace) {
+      if (namespace === familyKey || familyKey.startsWith(`${namespace}-`)) return 1;
+      if (namespace.split("-").some((token) => familyNamesVendor(token))) return 1;
+    }
   }
   return 0;
 }
@@ -1083,17 +1127,18 @@ function familyModeOf<T>(values: readonly (T | undefined)[], preferSmaller = fal
  */
 function familyRepresentative(entries: readonly IndexedModel[]): ModelsDevModel | undefined {
   if (entries.length === 0) return undefined;
-  /* A family whose head is a known vendor family is answered even when every
+  /* A family whose stem names a known vendor family is answered even when every
      publisher of it is a reseller (option C of D655): `gemini-3-flash` is only
      listed by platforms, yet it is still Gemini, and leaving the row on the
      generic 128k shape hides a window the catalog does publish. A family with
      no vendor identity at all — a synthetic `Vendor/Disputed`, or one only
      unrelated resellers carry — is still refused, so an unnamed row never
      asserts an arbitrary deployment's capabilities. */
-  const knownVendorFamily = FAMILY_VENDOR_PROVIDERS[familyHead(modelFamilyKey(entries[0].model.modelId))] !== undefined;
+  const tierOf = ({ model }: IndexedModel): number =>
+    familyVendorTier(model, modelFamilyKey(model.modelId));
   if (
-    !knownVendorFamily &&
-    !entries.some(({ model }) => familyVendorTier(model, modelFamilyKey(model.modelId)) >= 1)
+    !elementsNameVendorFamily(entries[0].model.modelId) &&
+    !entries.some((entry) => tierOf(entry) >= 1)
   ) {
     return undefined;
   }
@@ -1104,9 +1149,7 @@ function familyRepresentative(entries: readonly IndexedModel[]): ModelsDevModel 
     ordered.map(({ model }) => [...model.modalities.input].sort().join("+")),
   );
   const vendorContext = familyModeOf(
-    ordered
-      .filter(({ model }) => familyVendorTier(model, modelFamilyKey(model.modelId)) >= 2)
-      .map(({ model }) => model.limit.context),
+    ordered.filter((entry) => tierOf(entry) >= 3).map(({ model }) => model.limit.context),
     true,
   );
   const preferredContext = vendorContext ?? modeContext;
@@ -1114,13 +1157,14 @@ function familyRepresentative(entries: readonly IndexedModel[]): ModelsDevModel 
     Number(model.limit.context !== undefined && model.limit.context === preferredContext) +
     Number(model.limit.output !== undefined && model.limit.output === modeOutput) +
     Number([...model.modalities.input].sort().join("+") === modeInput);
+  /* The most official record represents the family, so a relay row names the
+     vendor whose model it serves rather than whichever platform happened to be
+     indexed first. Agreement and name order only break ties between equals. */
   return [...ordered].sort((left, right) => {
+    const tierDiff = tierOf(right) - tierOf(left);
+    if (tierDiff) return tierDiff;
     const agreementDiff = agreement(right) - agreement(left);
     if (agreementDiff) return agreementDiff;
-    const tierDiff =
-      familyVendorTier(right.model, modelFamilyKey(right.model.modelId)) -
-      familyVendorTier(left.model, modelFamilyKey(left.model.modelId));
-    if (tierDiff) return tierDiff;
     const providerDiff = left.provider.providerKey.localeCompare(right.provider.providerKey);
     if (providerDiff) return providerDiff;
     return left.model.modelId.localeCompare(right.model.modelId);

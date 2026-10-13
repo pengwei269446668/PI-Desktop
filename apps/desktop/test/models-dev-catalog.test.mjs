@@ -1942,3 +1942,60 @@ test("a vendor family answers from the vendor's own record over a platform copy"
   assert.equal(match?.providerKey, "zai", "the vendor's own record represents the family");
   assert.equal(match.limit.context, 1_000_000);
 });
+
+/*
+  The vendor stem may sit inside the family's first token or in the id's
+  upstream namespace, so one map entry per vendor serves every generation of
+  that vendor's models.
+*/
+test("a generation suffix and a vendor namespace both reach the vendor record", async (t) => {
+  const catalog = await loadFixtureCatalog(t, {
+    "tencent-token-plan": { models: { "hy3": {
+      id: "hy3", tool_call: true, limit: { context: 256_000, output: 128_000 },
+    } } },
+    mirror: { models: { "tencent/Hy3": {
+      id: "tencent/Hy3", tool_call: true, limit: { context: 262_144, output: 32_768 },
+    } } },
+    "alibaba-cn": { models: { "qwen3.8-max": {
+      id: "qwen3.8-max", tool_call: true, limit: { context: 1_000_000, output: 131_072 },
+    } } },
+    platform: { models: { "qwen3.8-max": {
+      id: "qwen3.8-max", tool_call: false, reasoning: false,
+      limit: { context: 32_000, output: 8_192 },
+    } } },
+  });
+
+  /* `hy3` belongs to the `hy` family (`tencent`), reached through the vendor's
+     own provider key rather than a namespace mirror. */
+  const hy = catalog.findModel({
+    vendorKey: "custom",
+    baseUrl: "https://relay.example/v1",
+    modelId: "hy3",
+  });
+  assert.equal(hy?.providerKey, "tencent-token-plan");
+  assert.equal(hy.limit.context, 256_000);
+
+  /* `qwen3.8-max` belongs to the `qwen` family (`alibaba`). With the two
+     records disagreeing on capabilities, the family read picks the vendor's own
+     record rather than the platform copy. */
+  const qwen = catalog.findModel({
+    vendorKey: "custom",
+    baseUrl: "https://relay.example/v1",
+    modelId: "qwen3.8-max",
+  });
+  assert.equal(qwen?.providerKey, "alibaba-cn");
+  assert.equal(qwen.limit.context, 1_000_000);
+});
+
+test("an id the catalog does not publish at all stays unmatched", async (t) => {
+  const catalog = await loadFixtureCatalog(t, {
+    zai: { models: { "glm-5.3": { id: "glm-5.3", limit: { context: 1_000_000 } } } },
+  });
+  for (const modelId of ["jev-1.13.0", "jev-latest", "kimi-k2.8-preview"]) {
+    assert.equal(
+      catalog.findModel({ vendorKey: "custom", baseUrl: "https://relay.example/v1", modelId }),
+      undefined,
+      modelId,
+    );
+  }
+});
