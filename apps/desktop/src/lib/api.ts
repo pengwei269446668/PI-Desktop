@@ -2,6 +2,8 @@ import { projectPlanHistory } from "./plan-history";
 import { guardRemoteInvocation } from "./remote-ipc-safety";
 import { isRemoteSession, safeSessionSummary } from "./remote-session-safety";
 import type {
+  ConfigSyncTestInput,
+  ConfigSyncTestResult,
   ScheduledTaskRun,
   ActivationScope,
   AgentCapabilityMove,
@@ -89,6 +91,7 @@ import type {
   SessionCollaborationSummary,
   TraySessionPreferences,
   ToolPermissionResolution,
+  BuiltinSkillRecord,
   UserSkillInput,
   UserSkillRecord,
   UserSubagentInput,
@@ -106,6 +109,7 @@ import type {
   PlanningStateEvent,
   PlansPendingResult,
   RemoteHostProjectsResult,
+  RemoteHostBrowseProjectsResult,
   RemoteHostRegisterProjectResult,
   RemoteHostSessionsResult,
   RemoteHostCreateSessionRequest,
@@ -692,16 +696,8 @@ export const api = {
   configSyncGetState: () => invoke<ConfigSyncState>(IPC.invoke.configSyncGetState),
   configSyncConfigure: (input: ConfigSyncConfigureInput) =>
     invoke<ConfigSyncState>(IPC.invoke.configSyncConfigure, input),
-  configSyncTest: (input: Omit<ConfigSyncConfigureInput, "backupPassword"> & { backupPassword?: string }) =>
-    invoke<{
-      ok: boolean;
-      conditionalWrites: boolean;
-      appendOnly: boolean;
-      message?: string;
-    }>(
-      IPC.invoke.configSyncTest,
-      input,
-    ),
+  configSyncTest: (input: ConfigSyncTestInput) =>
+    invoke<ConfigSyncTestResult>(IPC.invoke.configSyncTest, input),
   configSyncSyncNow: () => invoke<ConfigSyncState>(IPC.invoke.configSyncSyncNow),
   configSyncPause: (paused: boolean) =>
     invoke<ConfigSyncState>(IPC.invoke.configSyncPause, { paused }),
@@ -843,15 +839,25 @@ export const api = {
     invoke<{ projects: ProjectRecord[] }>(IPC.invoke.projectList),
   listProjectGroups: () =>
     invoke<{ groups: ProjectGroupRecord[] }>(IPC.invoke.projectGroupList),
+  createRemoteProjectGroup: (name: string, hostKey: string, path: string) =>
+    invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupCreateRemote, { name, hostKey, path }),
   createProjectGroup: (name: string, folders: string[]) =>
     invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupCreate, { name, folders }),
   renameProjectGroup: (groupId: string, name: string) =>
     invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupRename, { groupId, name }),
-  updateProjectGroup: (groupId: string, name: string, folders: string[]) =>
+  // `primary` names the folder that becomes the group's primary root; the host
+  // keeps the stored one when it is omitted.
+  updateProjectGroup: (
+    groupId: string,
+    name: string,
+    folders: string[],
+    primary?: string,
+  ) =>
     invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupUpdate, {
       groupId,
       name,
       folders,
+      ...(primary ? { primary } : {}),
     }),
   getProjectGroupMemory: (groupId: string) =>
     invoke<{ memory: ProjectMemory }>(IPC.invoke.projectGroupMemoryGet, { groupId }),
@@ -1176,6 +1182,10 @@ export const api = {
     ),
 
   // --- Skills the user owns -------------------------------------------------
+  listBuiltinSkills: () =>
+    invoke<{ builtins: BuiltinSkillRecord[] }>(IPC.invoke.skillBuiltinList),
+  setBuiltinSkillEnabled: (id: string, enabled: boolean) =>
+    invoke<{ id: string; enabled: boolean }>(IPC.invoke.skillBuiltinSetEnabled, { id, enabled }),
   listUserSkills: (query?: AgentCapabilityQuery) =>
     invoke<{ skills: UserSkillRecord[] }>(IPC.invoke.skillList, query),
   createUserSkill: (skill: UserSkillInput) =>
@@ -1398,7 +1408,7 @@ export const api = {
   /** Toggles the devtools console; rejects unless developer mode is on. */
   toggleDevTools: (open?: boolean) =>
     invoke<{ open: boolean }>(IPC.invoke.devtoolsToggle, { open }),
-  workspaceDiff: () => invoke<WorkspaceDiff>(IPC.invoke.workspaceDiff),
+  workspaceDiff: (sessionId?: string) => invoke<WorkspaceDiff>(IPC.invoke.workspaceDiff, { ...(sessionId ? { sessionId } : {}) }),
   workspaceReviewRollback: (input: {
     sessionId: string;
     snapshotId: string;
@@ -1419,22 +1429,24 @@ export const api = {
     invoke(IPC.invoke.browserOpenExternal, url ? { url } : {}),
   browserGetState: () =>
     invoke<BrowserState | null>(IPC.invoke.browserGetState),
-  fsList: (path?: string) =>
-    invoke<{ entries: FsEntry[] }>(IPC.invoke.fsList, { path: path ?? "" }),
-  fsRead: (path: string, mimeType?: string) =>
+  fsList: (path?: string, sessionId?: string) =>
+    invoke<{ entries: FsEntry[] }>(IPC.invoke.fsList, { path: path ?? "", ...(sessionId ? { sessionId } : {}) }),
+  fsRead: (path: string, mimeType?: string, sessionId?: string) =>
     invoke<FsReadResult>(IPC.invoke.fsRead, {
       path,
       ...(mimeType ? { mimeType } : {}),
+      ...(sessionId ? { sessionId } : {}),
     }),
-  fsReadImageDataUrl: (ref: string, mimeType?: string) =>
+  fsReadImageDataUrl: (ref: string, mimeType?: string, sessionId?: string) =>
     invoke<FsImageDataUrlResult>(IPC.invoke.fsReadImageDataUrl, {
       ref,
       ...(mimeType ? { mimeType } : {}),
+      ...(sessionId ? { sessionId } : {}),
     }),
-  fsReveal: (path: string) => invoke(IPC.invoke.fsReveal, { path }),
-  fsOpen: (path: string, mimeType?: string) =>
-    invoke(IPC.invoke.fsOpen, { path, mimeType }),
-  fsIndex: () => invoke<FsIndexResult>(IPC.invoke.fsIndex),
+  fsReveal: (path: string, sessionId?: string) => invoke(IPC.invoke.fsReveal, { path, ...(sessionId ? { sessionId } : {}) }),
+  fsOpen: (path: string, mimeType?: string, sessionId?: string) =>
+    invoke(IPC.invoke.fsOpen, { path, mimeType, ...(sessionId ? { sessionId } : {}) }),
+  fsIndex: (sessionId?: string) => invoke<FsIndexResult>(IPC.invoke.fsIndex, { ...(sessionId ? { sessionId } : {}) }),
   /**
    * Complete a file reference from chat text to a real file (D320 follow-up).
    * The main process owns the root order — project, session scratch,
@@ -1653,6 +1665,8 @@ export const api = {
     invoke<{ ok: true }>(IPC.invoke.remoteHostRemove, { hostKey }),
   reconnectRemoteHost: (hostKey: string) =>
     invoke<{ host: RemoteHostSummary }>(IPC.invoke.remoteHostReconnect, { hostKey }),
+  remoteHostBrowseProjects: (hostKey: string, path?: string) =>
+    invoke<RemoteHostBrowseProjectsResult>(IPC.invoke.remoteHostBrowseProjects, { hostKey, ...(path === undefined ? {} : { path }) }),
   remoteHostProjects: (hostKey: string) =>
     invoke<RemoteHostProjectsResult>(IPC.invoke.remoteHostProjects, { hostKey }),
   registerRemoteProject: (hostKey: string, path: string) =>

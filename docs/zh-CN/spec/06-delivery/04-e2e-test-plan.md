@@ -391,10 +391,11 @@ task-candidate E2E 从请求工作树运行，但使用主工作区已经准备�
 - **预期**：`providers.lookupModel` 只从本地快照回答手输 id —— 不访问提供商网络、不调用主机 —— 命中时按「被勾选的模型」同样的口径播种绑定（已发布的上下文长度、最大输出、思考等级，`contextWindowSource: "catalog"`），而存储的 id 保持用户输入的原样。未命中、调用失败，或该 id 已被本次发现结果描述过时，行为与之前一致：一行可用，通用种子，列表既不卡住也不重复。
   该 id 以另一种拼写发布（路由前缀、日期戳、部署自己追加的标记）同样算命中：
   答复到达即就地升级该行，不必等到保存。
+- 实时发现的模型行若由服务报告正安全整数上下文/输入或输出上限，则该字段优先使用服务值；未报告字段独立回退到目录元数据。对于未锚定的中继，若模型所有者发布了匹配记录，则优先使用所有者记录；带点/连字符版本别名和一个白名单部署标签不会改写服务端 ID，所有者记录冲突时不会猜测限额。
 - **链接规格**：`03-runtime/12-provider-config-schema.md`、`03-runtime/13-model-catalog-and-selection.md`
 - **接受**：B（多模型提供商配置）
 - **里程碑**：M2
-- **状态**：已文档化；由 `apps/desktop/test/model-custom-lookup.test.mjs` 与 `apps/desktop/test/provider-lookup-model-handler.test.mjs` 覆盖
+- **状态**：已文档化；由 `apps/desktop/test/model-custom-lookup.test.mjs`、`apps/desktop/test/provider-lookup-model-handler.test.mjs` 与 `apps/desktop/test/provider-endpoint-metadata.test.mjs` 覆盖
 
 #### E2E-005H：从较长的服务模型列表一次全选当前可见模型
 
@@ -2096,7 +2097,7 @@ hover/focus 不带移位标签，项目标题 hover/focus 路径显示
 #### E2E-048c：分离含聊天的项目文件夹并单独删除
 
 - **前提：** 一个保留的逻辑项目包含一个主文件夹和一个有至少一条已保存聊天的附加文件夹；所有聊天均处于空闲状态。
-- **步骤：** 1) 打开“编辑项目”并移除附加文件夹。2) 保存后检查剩余项目组及该文件夹对应的独立项目行。3) 打开独立项目中的聊天，确认对话记录完整。4) 使用两步删除操作删除该独立项目。5) 检查剩余项目组、项目列表、聊天列表及磁盘上的文件夹。
+- **步骤：** 1) 打开“编辑项目”并移除附加文件夹。2) 保存后检查剩余项目组及该文件夹对应的独立项目行。3) 打开独立项目中的聊天，确认对话记录完整。4) 对独立项目选择“删除项目”，并在确认对话框中明确确认。5) 检查剩余项目组、项目列表、聊天列表及磁盘上的文件夹。
 - **预期：** 从项目组移除文件夹会保留其项目记录、聊天和对话记录，并将其作为独立项目显示。新聊天使用该项目的路径级上下文；共享说明和记忆仍属于原项目组。确认删除后会移除该项目的会话及对话记录，但保留磁盘上的文件夹；原项目组仍保留主文件夹。
 - **链接规格：** `03-runtime/04-data-storage.md`、`04-ux/08-component-spec.md`、`04-ux/09-interaction-patterns.md`、ADR 0249、ADR 0251。
 - **验收：** C（项目和聊天交互）、F（持久化）、品质。
@@ -2470,6 +2471,7 @@ MainChat 弥补了缺口。 Maximized/fullscreen 调用保留最新的
   截图视口在完成前保持稳定，完成后 `innerWidth`/`innerHeight` 与最新请求尺寸一致。同一页面的截图串行执行，
   不阻塞其他标签。失败截图会解除尺寸锁定；隐藏或关闭页面不会意外显示页面，也不会把排队截图转发到其他页面。
   重建或释放销毁的 guest 后不残留孤立原生视图。无需重复截图来修复布局。
+- **超时恢复**：任一截图 API 超过 30 秒仍未完成时，以 `TIMEOUT` 失败，分离卡住的 CDP 会话并释放该页面的截图队列；后续截图可以重新连接并继续。
 - **关联规范**：英文源规格中的 [E2E-BROWSER-capture-resize](../../../spec/06-delivery/04-e2e-test-plan.md#e2e-browser-capture-resize-capture-preserves-live-placement-and-restores-the-latest-viewport)。
 - **状态**：原生 Electron 截图/尺寸及窗口切换期间的位置验证由 `node scripts/e2e-browser-capture-resize.mjs` 自动执行（保留产物）。`apps/desktop/test/browser-capture-resize.test.mjs` 覆盖生产 Host/Pane/CDP 路径、失败、排队、标签关闭、guest 重建及面板裁剪。
 
@@ -2577,6 +2579,16 @@ MainChat 弥补了缺口。 Maximized/fullscreen 调用保留最新的
 
 - **完整历史回归**：打开包含 140 条消息的会话，不向上翻页，选择复制整个对话；剪贴板必须包含第 1–140 条消息。从搜索上下文窗口和长消息截断预览重复验证。保留当前可见的生成中文字；读取失败时提示错误，剪贴板保持不变。仅在选择复制后读取完整历史，不改变阅读位置。运行 `node scripts/e2e-copy-conversation.mjs`。
 - 编辑时复制应使用草稿选区，无选区时复制整份草稿；选中消息文本应选中草稿。菜单不提供编辑、删除或版本切换；取消后原消息及其菜单保持不变。自动化验证：`node scripts/e2e-message-edit-copy.mjs`。
+
+#### E2E-CHAT-delete-turn-preserves-other-live-outputs：删除回合后保留其他实时输出
+
+- **前提条件**：会话有三个已完成的回合。渲染器包含这三个回合的助手和工具输出，但由于 outbox 追加仍在等待，持久化内容至少缺少一条输出。
+- **步骤**：删除中间的用户回合；转录替换完成后重新加载会话。
+- **预期**：被删除的用户回合及其输出仍然不存在；第一个和第三个回合的用户、助手和工具消息在删除前后及重新加载后都保留。待处理的追加不能在转录替换后执行并恢复被删除的回合。
+- **关联规范**：`03-runtime/04-data-storage.md`、`03-runtime/06-host-rpc-protocol.md`、ADR 0060
+- **验收**：C（聊天流）、F（持久化）、质量
+- **里程碑**：M6+
+- **状态**：单元已覆盖（`delete-message-preserves-transcript.test.mjs`、`persistence-outbox.test.mjs`）；完整桌面旅程仍为草稿
 
 #### E2E-CHAT-copy-formula-as-tex：复制渲染后的公式得到源码
 
@@ -5621,10 +5633,11 @@ eleven-tool-round desktop paths are verified by
 | C / F — Hourly task updates | E2E-SCHEDULED-manual-to-hourly |
 | C / F / Quality — Saved project isolation | E2E-SCHEDULED-manual-workspace-binding |
 | C / F / Quality — 桌面定时任务 | E2E-SCHEDULED-desktop-automation-lifecycle |
-| F / Security / Quality — 便携式配置同步 | E2E-CONFIG-SYNC-webdav-portable-configuration |
+| F / Security / Quality — Portable configuration sync | E2E-CONFIG-SYNC-s3-portable-configuration |
 | A / C — Unicode stdio 成帧 | E2E-RPC-unicode-separators |
 | C / G / Quality — Plugins navigation | E2E-NAV-plugins-button-goes-back |
 | C / D / Quality — 侧边栏行状态 | E2E-LAYOUT-sidebar-row-states |
+| E / Quality — 浏览器截图超时恢复 | E2E-BROWSER-capture-resize |
 | A / C / Quality — 侧栏材质与设置返回 | E2E-LAYOUT-sidebar-settings |
 | C / Quality — 目的页加载与焦点 | E2E-087b |
 | A / H / Quality — 渲染器进程崩溃恢复 | E2E-RUNTIME-renderer-crash-recovery |
@@ -5632,6 +5645,7 @@ eleven-tool-round desktop paths are verified by
 | B / F / Security — 提供商复制 | E2E-PROVIDER-copy-config-without-credentials |
 | B / F / Quality — 已选模型顺序 | E2E-MODEL-selected-order-persists |
 | E / F / Quality — MCP 服务器超时覆盖 | E2E-261 |
+| C / D / Quality — 折叠项目后重置会话历史 | E2E-263 |
 | A — 应用程序启动 | E2E-001、E2E-002、E2E-003、E2E-004、E2E-067、E2E-076、E2E-079、E2E-092、E2E-097、E2E-143、E2E-150、E2E-168、E2E-204、E2E-217 |
 | B——模型配置 | E2E-005、E2E-005G、E2E-006、E2E-007、E2E-038、E2E-050、E2E-052、E2E-055、E2E-066、E2E-080、E2E-082、E2E-151、E2E-005J、E2E-199、E2E-201、E2E-202、E2E-203、E2E-209、E2E-166 |
 | C — 对话和直播 | E2E-CHAT-running-status-survives-output-pauses、E2E-008、E2E-008d、E2E-008a、E2E-009、E2E-010、E2E-011、E2E-011a、E2E-011b、E2E-031、E2E-040、E2E-047、E2E-048、E2E-048c、E2E-048A、E2E-049、E2E-052、 E2E-053、E2E-054、E2E-055、E2E-059、E2E-059a、E2E-060c、E2E-060d、E2E-061、E2E-061a、E2E-062、E2E-064、E2E-065、E2E-068、E2E-071、 E2E-073、E2E-074、E2E-075、E2E-081、E2E-083、E2E-084、E2E-086、E2E-087、E2E-088、E2E-088b、E2E-089、E2E-090、E2E-094、E2E-095、E2E-096、 E2E-097、E2E-098、E2E-099、E2E-102、E2E-102a、E2E-102b、E2E-106、E2E-109、E2E-111、E2E-114、E2E-116、E2E-117、E2E-118、E2E-119、 E2E-120、E2E-121、E2E-代理-001、E2E-142、E2E-144、E2E-145、E2E-146、E2E-147、E2E-151、E2E-199、E2E-250、E2E-166、E2E-SUBAGENT-resume-a-settled-delegation |
@@ -5651,6 +5665,7 @@ eleven-tool-round desktop paths are verified by
 | C — 对话和直播（输入法斜杠别名） | E2E-255 |
 | E——工具和权限（Skill 常驻） | E2E-254 |
 | 品质（Skill 常驻与输入法斜杠别名） | E2E-254、E2E-255 |
+| C / E / F / 品质——内置技能启用状态 | E2E-SKILL-builtin-activation |
 | C — 对话和直播（插件会话导入可见性） | E2E-257 |
 | F——持久化（插件会话导入可见性） | E2E-257 |
 | C — 对话和直播（聊天文件引用） | E2E-CHAT-shorthand-file-ref-opens-the-matching-file、E2E-CHAT-file-ref-opens-the-surface-that-owns-it |
@@ -5978,7 +5993,7 @@ eleven-tool-round desktop paths are verified by
 - 打开设置（页脚配置文件 → 设置）。
 - 预计**全页**设置（无应用程序 sidebar/nav）。左导轨有返回应用、搜索，以及常规、AI、
   快捷键、指令、模型、技能、MCP、子智能体、项目、云同步、远程主机、信息，
-  按该顺序排列（打包构建不显示云同步）；内容窗格显示所选设置页或
+  按该顺序排列（云同步和远程主机在打包版均显示实验性标签）；内容窗格显示所选设置页或
   项目存档。
 - 返回应用程序外壳并期望插件保持独立
   侧边栏页脚目的地。
@@ -6163,7 +6178,7 @@ eleven-tool-round desktop paths are verified by
 - 在约 1200×690 的窗口中打开浅色主题的“设置 → 常规”。
 - 侧栏宽度约 275 像素，背景为 `#f4f4f4`，常规项为唯一选中项，并显示返回和搜索。
 - 主题选择器可正常使用，且没有无效开关或打开目标行。
-- “常规”页显示外观卡片，“AI”页显示权限和默认值卡片。核心侧栏依次包含常规、AI、快捷键、指令、模型、技能、MCP、子智能体、项目、云同步（仅开发构建）和信息；仅开发者模式显示远程主机。开发版且开启开发者模式时，AI 与快捷键之间可能显示语音；插件扩展目的地位于核心分组之后。侧栏不再有“导入”入口。
+- “常规”页显示外观卡片，“AI”页显示权限和默认值卡片。核心侧栏依次包含常规、AI、快捷键、指令、模型、技能、MCP、子智能体、项目、云同步、远程主机和信息；云同步与远程主机在所有构建中都显示实验性标签。开发版且开启开发者模式时，AI 与快捷键之间可能显示语音；插件扩展目的地位于核心分组之后。侧栏不再有“导入”入口。
 - 在 800、1200 和 1600 像素宽度之间调整窗口；内容卡片填充
   每种尺寸都可用右窗格，无需更换导轨或引入
   水平滚动。
@@ -6264,23 +6279,8 @@ eleven-tool-round desktop paths are verified by
 
 - **前提条件**：三个持久项目 A、B 和 C，每个都至少有一个带转录本的会话；A 已归档并作为
   侧边栏选项卡保留；B 是活动工作区；C 是一个已存储双文件夹项目组的根目录。
-- **步骤**：打开设置 → 项目存档，打开 A 的行菜单，选择删除项目，并在对话框中确认。然后
-  从侧边栏项目菜单对正处于活动工作区的 B 重复同一操作：第一次点击只是武装该项，只有第二次
-  点击才会移除 B。接着对 C 尝试同一操作，然后对一个宿主已不再知晓的路径尝试，最后在 D 的
-  某个任务仍在运行时尝试删除 D。
-- **预期**：对话框会指明项目名称，说明该项目及其会话与转录本会被永久移除，并说明磁盘上的
-  文件夹不会被删除；确认之前不会移除任何内容，被武装后放置不管的项会自行解除武装、不会移除
-  任何东西。确认后，持久项目行、该项目的会话、其转录本、scratch 和 review 文件以及该项目的
-  持久记忆均已消失，而磁盘上的文件夹保持原样。被删除的项目会立即从设置 → 项目存档和侧边栏
-  中消失，重新加载后依然如此：没有保留的选项卡、没有最近项目条目、没有由会话推导的行，也没有
-  残留的 pin、archive 或 order 偏好。其他所有项目的会话与转录本不受影响。当被删除的项目曾是
-  活动工作区时，工作区回退到另一个已打开的项目
-  或 Temporary，且下次启动不会重新打开已删除的路径。磁盘上文件夹已被移动或删除的项目仍可
-  移除。删除 C 会被拒绝并给出提示消息，该组保持不变；宿主已无持久行的路径仍会从项目存档与
-  侧边栏中移除，不会报出缺少项目的错误。当 D 的任务仍在运行时删除 D 会打开确认对话框，而不是给出
-  一条随 toast 消失的警告；对话框会指明正在运行的会话，其确认按钮表述为停止这些任务，取消不会移除
-  任何内容，确认则先停止这些轮次，然后再删除 D（见
-  E2E-PROJECT-delete-running-sessions-are-named-and-stopped）。
+- **步骤**：打开设置 → 项目存档，为 A 选择“删除项目”，确认在任何内容移除前会打开确认对话框。点击 X 并确认 A 仍存在，再打开对话框并明确确认删除。然后从侧边栏项目菜单对活动项目 B 重复：选择删除、取消并确认 B 仍存在，再重新打开对话框并确认删除。随后尝试删除 C、宿主已不再知晓的路径，以及仍有任务运行的第四个项目 D。
+- **预期**：两个界面的空闲项目在选择“删除项目”后都会立即打开确认对话框。点击 X、“取消”、按 Escape 或点击遮罩层只会关闭对话框，不会移除项目、会话或转录本。对话框会说明项目、所属会话及转录本将被永久移除，并说明磁盘文件夹不会被删除。明确确认后，持久项目行、所属会话、转录本、scratch、review 文件及项目记忆都会移除。项目会立即从设置 → 项目存档和侧边栏消失，重新加载后也不会重新出现：没有保留的选项卡、最近项目条目、会话推导行或残留的 pin/archive/order 偏好。其他项目的会话和转录本不受影响。若删除的是活动项目，工作区会回退到另一个已打开项目或 Temporary，下次启动也不会重新打开该路径。即使项目文件夹已被移动或删除，仍可移除项目。删除 C 会被拒绝并显示提示，项目组保持不变；宿主已无持久行的路径仍会从项目存档和侧边栏移除，不会报缺少项目错误。删除仍有运行任务的 D 时会打开同一个确认对话框并列出运行中的会话，确认按钮会明确表示停止并删除；取消会保留项目和任务，确认则先停止对应轮次再删除 D（见 E2E-PROJECT-delete-running-sessions-are-named-and-stopped）。
 - **链接规格**：`03-runtime/06-host-rpc-protocol.md` §项目、
   `03-runtime/04-data-storage.md`、`04-ux/08-component-spec.md` §3.9、ADR 0251
 - **验收**：D（工作区）、F（持久化）、品质
@@ -6314,21 +6314,13 @@ eleven-tool-round desktop paths are verified by
 
 ### E2E-SESSION-two-click-delete-arms-first
 
-- **前提条件**：一个包含一个空闲会话和一个运行中会话的项目，二者都可从侧边栏会话菜单、侧边栏
-  项目菜单以及项目索引到达。
-- **步骤**：打开空闲会话的会话菜单，按一次删除，并让该项保持武装直到武装超时，然后再按一次以
-  确认移除。对来自侧边栏菜单与项目索引的项目行重复该操作。
-- **预期**：第一次按下不会移除任何东西，并把该项标签改为 `nav.deleteTaskConfirm` /
-  `project.deleteMenuConfirm`（"Delete?" / "确认删除？"）且带 `data-armed="true"`；菜单保持
-  打开，点击外部、按 Escape 或武装超时都会解除武装且不移除任何内容。只有第二次按下才会移除
-  该会话及其转录本和该行，也只有对项目行的第二次按下才会移除空闲项目。会话与项目永远不会共用
-  一次武装。删除仍有运行中轮次的项目时，仍会打开指明这些会话并停止它们的对话框（见
-  E2E-PROJECT-delete-running-sessions-are-named-and-stopped）。
-- **链接规格**：`04-ux/09-interaction-patterns.md` §1.6、D421、D431、D441
+- **前提条件**：一个项目包含一个空闲会话和一个仍在运行中的会话，两者都可从侧边栏会话菜单访问。
+- **步骤**：打开空闲会话菜单并按一次“删除”，确认该项进入武装状态；按 Escape 或等待武装超时后，确认会话仍存在。重新打开菜单，连续点击两次“删除”，确认会话被移除。待运行中的会话结束后，对它重复武装、取消和确认流程。
+- **预期**：第一次点击不会移除内容，并把标签改为 `nav.deleteTaskConfirm`（“Delete?” / “确认删除？”），且带 `data-armed="true"`；菜单保持打开，点击外部、按 Escape 或等待超时都会解除武装且不移除内容。只有第二次点击才会删除会话及其转录本。项目删除则必须通过明确的确认对话框（见 E2E-PROJECT-delete-removes-project-and-owned-sessions）。
+- **链接规格**：`04-ux/09-interaction-patterns.md` §1.6、D421、D431
 - **验收**：品质
 - **里程碑**：M6+
-- **状态**：部分自动化 —— `apps/desktop/test/two-step-delete.test.mjs` 固定了共享的武装与它的
-  超时、所有已发布语言包中的两个标签，以及第一次按下只做武装；端到端旅程仍为草稿
+- **状态**：部分自动化 —— `apps/desktop/test/two-step-delete.test.mjs` 固定了会话武装状态、超时及本地化标签；端到端旅程仍为草稿
 
 ### US-UI-59 基于会话的后台工具
 - 在项目 A 中启动可见轮次，在项目 B 运行时切换到项目 B，并且
@@ -6551,7 +6543,8 @@ eleven-tool-round desktop paths are verified by
 - **预期**：一次可见一个问题；小指标显示
   输入框批准区域中已回答、当前和跳过的状态
   Plan 和 Goal 批准使用的停靠位置相同。请求没有
-  倒计时。工具输出排序为 `question：answer`，使用 `、`
+  倒计时。过长的问题正文在卡片内滚动（`min(208px, 24dvh)`，并有 `24vh` 回退），可通过键盘聚焦且显示焦点环；标题栏上的
+  Decline、Skip 和 Next/Submit 留在该滚动区域之外。切换问题后正文从顶部开始。工具输出排序为 `question：answer`，使用 `、`
   多个答案之间和问题之间的 `\n---\n` 之间，并保持
   `question：` 用于跳过的问题。拒绝所有产生空
   每个问题的占位符，仍然完成工具调用。
@@ -6559,7 +6552,8 @@ eleven-tool-round desktop paths are verified by
   `04-ux/11-asktool-question-card.md`、ADR 0077
 - **验收**：E（交互式工具输出）、C（内联卡）
 - **里程碑**：M5
-- **状态**：草案（单位覆盖范围有效；桌面旅程待定）
+- **自动化覆盖**：`pnpm test:e2e:asktool-card` 在 Electron 中挂载生产组件，覆盖长问题滚动、键盘可达性、标题栏动作可见性和点击 Next 后的滚动重置。
+- **状态**：部分自动化（组件路径和长问题行为已覆盖；完整应用桌面旅程仍待完成）
 
 - **请求切换回归**：在聊天 B 留下一个单题请求。在聊天 A 将双题请求推进到第二题，
   再切换到 B。B 应显示自己的第一题、空白答案和可用输入框，不应出现应用错误页。
@@ -7447,10 +7441,10 @@ eleven-tool-round desktop paths are verified by
 - **步骤**：
   1. 打开设置 → 常规。确认网络卡提供系统 / 直连 / 自定义。从未配置过代理的配置文件默认是系统。
   2. 选择自定义。确认代理 URL、默认绕过列表和测试。输入 `not-a-proxy` 并失焦。确认内联错误且未保存。
-  3. 输入 `socks5://127.0.0.1:1080` 或 `http://127.0.0.1:7890` 并失焦。确认 `settings.get` 中 `networkProxy.mode` 为 `custom`。
+  3. 输入 `socks5://127.0.0.1:1080` 或 `http://127.0.0.1:7890` 后，立即选择“系统”，中间不要点击其他位置。确认 `settings.get` 中 `mode` 为 `system`，且 URL 与绕过列表仍保留。再选回“自定义”，确认两个值恢复到输入框，且 `mode` 为 `custom`。
   4. 对正在监听的代理点测试，确认已连接；对关闭的端口点测试，确认失败且不改已保存 URL。对需要认证的 HTTP / SOCKS5 代理填入 `user:pass@` 后再测，确认是已连接而不是 `net::ERR_NO_SUPPORTED_PROXIES`（issue #490）。
   5. 保存自定义代理后，通过已配置供应商发送一条简短提示。确认供应商请求和响应经过代理；即使 SOCKS5 代理将完整 bind 响应合并在一个 TCP 数据块中，请求仍能完成。再确认扩展市场刷新和 models.dev 刷新走代理；绕过列表中的回环地址不走代理。
-  6. 切到直连再切回系统。确认无需重启应用即可生效。
+  6. 切到直连再切回系统。确认无需重启应用即可生效。再选回自定义，确认第 3 步的 URL 与绕过列表原样回来（系统/直连期间它们保留在 `AppSettings.networkProxy` 里）。
 - **预期**：自定义覆盖模型请求、市场、更新、插件 `net.fetch` 和内置浏览器。工作区 Bash 的 `env` 看不到该设置写入的 `HTTP_PROXY` / `ALL_PROXY`。OAuth 仍走系统浏览器。`file:` / `ftp:`、SOCKS4 以及百分号编码错误的认证信息均被拒绝。带账号密码的 HTTP / SOCKS5 测试与应用不再报 `net::ERR_NO_SUPPORTED_PROXIES`（issue #490）。无协议/存储版本升级。
 - **链接规格**：`04-ux/06-settings-ia.md`、`03-runtime/07-process-model.md`、ADR 0177、D340
 - **验收**：B（设置）、F（供应商）、安全
@@ -8209,6 +8203,21 @@ runner 会在运行时的隔离临时目录中生成六个插件形态 fixture�
 - **里程碑**：M5
 - **状态**：单元覆盖（`packages/agent-runtime/src/runtime.test.ts`）；渲染桌面旅程为草稿（除非明确要求，不本地运行 E2E）
 
+#### E2E-SKILL-builtin-activation：在设置中管理内置技能
+
+- **前提条件**：使用隔离的桌面配置文件和普通项目工作区。确保另有一项已启用的用户或插件 Skill，使 imagegen 关闭后 `Skill` 工具仍可用。
+- **步骤**：
+  1. 打开「设置 → Agent → Skills」，检查「内置技能」分组，确认 `pi-desktop/imagegen` 和 `pi-desktop/plugin-development` 默认开启。
+  2. 关闭 `pi-desktop/imagegen`，在普通工作区打开新会话，检查技能目录和 Composer 的 `/` 菜单。
+  3. 使用旧的 imagegen id 调用本地 `Skill` 工具。
+  4. 重新开启 imagegen 并打开另一个会话。重启应用后检查设置和新会话目录。
+- **预期**：关闭后的 imagegen 不会出现在提示词技能目录和 `skill:pi-desktop/imagegen` 斜杠条目中。使用旧 id 直接加载时会提示该内置技能已关闭。重新开启后，新会话可再次看到两项入口；设置在重启后仍保留。plugin-development 在设置中始终可见，但只在插件工作区进入会话目录。关联的 Agent 工具保持独立可用。
+- **链接规格**：`07-plugins/01-plugin-system.md`（§12.3）、`03-runtime/01-ipc-protocol.md`（§12b）、`03-runtime/02-agent-runtime.md`（§7.0.0）、`04-ux/04-builtin-commands.md`（§8）
+- **验收**：C（对话和直播）、E（工具和权限）、F（持久化）、品质
+- **覆盖范围**：`settings-inline-import-user-path.test.mjs` 在隔离 Electron 中验证设置开关、持久化 IPC 请求和页面关闭状态；`image-generation.test.mjs`、`composer-mcp.test.mjs` 及 host-core 技能/RPC 测试覆盖目录过滤、旧 id 加载拒绝、持久化和激活协议。重启和完整新会话旅程仍由桌面验收覆盖。
+- **里程碑**：M6+
+- **状态**：桌面交互旅程草稿
+
 #### E2E-255：顿号打开斜杠菜单
 
 - **前提条件**：可用中文输入法；输入框草稿为空；至少存在一条斜杠条目（内置别名、模板、插件命令或 Skill）。
@@ -8333,6 +8342,15 @@ runner 会在运行时的隔离临时目录中生成六个插件形态 fixture�
   row/spacer ownership, all-platform/fullscreen CSS fixtures in both sidebar
   states). DOM/CDP clicks are not native hit-test proof. Native pointer, drag
   and visual checks remain required; branch runs are exploratory only.
+
+### E2E-WORK-PANEL-overflow-tab-drag-exclusion
+
+- **前提条件**：在 Windows 上打开桌面会话，并创建足够多的工作面板标签，使横向标签栏发生溢出。
+- **步骤**：将标签栏分别滚到两端，切换到另一个对话再切回，用键盘重排标签，然后逐个关闭标签，直到只剩一个和没有标签。使用原生 `WM_NCHITTEST` 检查相邻侧边栏与对话标题栏、可见标签、标题栏操作按钮和多余空白。
+- **预期**：视口外的标签不会阻挡可见滚动视口以外的原生拖动。相邻标题栏和未使用的标题栏空白返回 `HTCAPTION`；可见标签和操作返回 `HTCLIENT`。切换、重排和关闭标签后，这些命中区域保持正确。
+- **链接规格**：`04-ux/07-ui-design-system.md` §10
+- **验收**：品质
+- **状态**：Windows 原生回归由 `scripts/e2e-work-panel-drag.mjs`（`pnpm test:e2e:work-panel-drag`）覆盖；macOS/Linux 原生拖动尚未验证。
 
 #### E2E-LAYOUT-sidebar-project-group-fold
 
@@ -8935,15 +8953,40 @@ the latest destination. These assertions measure work counts, not device FPS.
 - **状态：** `node scripts/e2e-scheduled.mjs` 自动化覆盖；按 AGENTS.md 在任务候选
   版本上运行，并记录已测提交与基线。
 
-### E2E-CONFIG-SYNC-webdav-portable-configuration
+<a id="e2e-config-sync-webdav-portable-configuration"></a>
 
-- **前提：** 已构建的任务候选版本、隔离的 Host 配置（开发者模式默认关闭，用来验证开发构建下的目的地），以及支持 strong ETag 和条件 PUT 的本地 WebDAV fixture，另有忽略条件头但支持 `PROPFIND` 目录列举的 fixture 变体。不使用真实 WebDAV 账户、provider 或生产桌面。
-- **步骤：** 1）在开发构建中、开发者模式关闭的情况下打开设置，确认“云同步”出现在导轨中且设置搜索能命中它；打开该页，确认导轨行和页面标题都不带实验性徽章。2）开关一次开发者模式，确认该目的地始终可用且可见性不变。3）填写 fixture URL、设备标签、目录和备份密码。4）运行能力测试，确认使用临时对象。5）选择 provider/MCP/skill 类别，保持凭据和 memory 未选中；在第二次预览中启用凭据，确认只显示脱敏计数。6）配置设备 A，创建 user provider 和 MCP 定义并同步。7）让设备 B 连接同一 vault，同步后检查待激活/映射，并验证审批前不会运行命令或任务。8）批准一个变更后的安全实体，拒绝一个暂存实体，在两台设备上编辑不相交设置并再次同步。9）测试并发 head writer、错误密码、weak ETag、密文损坏、redirect、归档路径穿越和网络中断。10）使用回环／私有地址的 fixture 勾选“允许在受信任的内网地址使用 HTTP”，确认刷新状态后仍保留；即使勾选，公网 HTTP 地址也必须被拒绝。
-- **预期：** 云同步在开发构建中、开发者模式关闭时即可访问，打包构建的导轨、页面和设置搜索都不含它，且导轨行与页面标题都不带实验性徽章；开关开发者模式既不改变入口可见性也不改变同步行为。测试拒绝不可靠的条件写入。HTTP 默认关闭，仅允许 localhost、`.local` 或私有／链路本地地址；公网 HTTP 地址会被拒绝，界面会提示凭据暴露风险。若 fixture 探测到该 endpoint 对不存在对象返回 502，后续只兼容该 endpoint 的这一行为；忽略条件头的服务器仍必须标记为不受支持。WebDAV 只能看到已认证的密文和不透明对象名；原始秘密不会出现在 Renderer 状态或日志中。相同和不相交的编辑会收敛，冲突保持可审查，明确删除使用 tombstone，类别退出不是删除，可执行导入在本地审批和映射前保持不激活。恢复不会暴露部分应用的本地配置。
-- **规格：** `04-ux/06-settings-ia.md`、`03-runtime/22-config-sync.md`、`03-runtime/14-secrets-storage.md`、`05-security/01-security.md`、ADR 0300。
-- **验收：** F（持久化）、Security、Quality。
-- **里程碑：** M6+。
-- **状态：** Draft；合并/密码学和进程内 WebDAV 条件写入覆盖已存在。云同步仅开发构建可见、打包构建省略该目的地由 `apps/desktop/test/settings-developer-only-destinations.test.mjs` 断言；完整双设备进程路径和逐检查点本地恢复故障注入仍待自动化。
+### E2E-CONFIG-SYNC-s3-portable-configuration
+
+Follow the [current S3 acceptance scenario](/spec/06-delivery/04-e2e-test-plan#e2e-config-sync-s3-portable-configuration).
+
+- Use separate Host processes, data directories, HOME and agent directories.
+  Local S3 fixtures exercise conditional writes, authentication, merge,
+  conflict choices and repeated convergence, deletions, credential opt-out,
+  approval and skill resources.
+- 项目和项目组列表保留在本机，不提供 projects 同步类别。发布项目/项目组元数据
+  不会在接收设备创建或修改项目/项目组；接收设备自行注册 workspace 后，映射并
+  审批项目级技能，验证资源成功到达而本机项目组名称、根目录及排序保持不变。
+  同步/恢复忽略旧 vault 的 `projects` 实体，保留本机项目和云端历史。
+- Backup only uploads local snapshots; histories are mode-specific. Sync
+  restore publishes with explicit acknowledgment; backup restore stays local.
+- The real settings-page test covers secret-free drafts, saved credential reuse,
+  explicit token clearing, mode selection, restore confirmation, stale history
+  responses and disconnect. Development-build-only visibility remains unchanged.
+- Live S3 is explicitly opt-in and authorized. Read credentials without logging
+  or copying them; use a fresh random prefix, verify initial emptiness, clean
+  only test-created objects and verify final emptiness. Never use the running
+  desktop or real model providers. Record the tested candidate/base.
+- A 30-entry history index does not imply physical garbage collection. Only
+  the new S3 format is supported, without legacy detection or migration;
+  unrelated data is not deleted. Recovery is not whole-filesystem atomicity.
+- Automation: `pnpm test:e2e:config-sync`, Rust `config_sync::` and
+  `user_skills::`, `config-sync-user-path.test.mjs`, `config-sync-ipc.test.mjs`.
+  Full checkpoint-recovery fault injection is not claimed by these user paths.
+- Start a held manual sync, leave Settings, then return. Verify Host still
+  reports `syncing`, duplicate actions remain disabled, and releasing the local
+  fixture finishes the operation and refreshes state. The aggregate RPC has no
+  deadline; individual S3 requests remain bounded.
+- Acceptance: F (persistence), Security, Quality. Candidate validation required.
 
 ### E2E-DIALOG-long-text-boundaries
 
@@ -9238,8 +9281,9 @@ the latest destination. These assertions measure work counts, not device FPS.
 - 自动化覆盖：`pnpm test:e2e:settings-scroll` 在隔离 Electron 中挂载真实的
   SettingsPage、store、翻译和构建后的 CSS，探针运行的是开发构建。仅 preload
   数据使用 fixture；搜索导航调用 SearchDialog 使用的公开 store 入口。该测试还
-  检查云同步仍是仅开发构建可见的目的地（无开发者模式门控、无实验性徽章），远程
-  主机保留其徽章，以及回落到常规。该测试覆盖渲染层交互，不覆盖 host 持久化或
+  检查开发版中云同步与远程主机的实验性标签；`settings-developer-only-destinations.test.mjs`
+  另行验证打包版可见性、搜索结果及仅开发者目的地的回落行为。该测试覆盖渲染层交互，
+  不覆盖 host 持久化或
   完整全局搜索弹窗。
 
 ### E2E-SCHEDULED-dispatch
@@ -9442,6 +9486,16 @@ the latest destination. These assertions measure work counts, not device FPS.
 - **预期：** 即使文件管理器视图可用，带位置的引用仍打开宿主只读文件选项卡。文件请求保留行列号，查看器滚动到视口中间的目标行；打开路径和文件内容与引用目标一致。
 - **规格：** `04-ux/08` §11.8；ADR 0262。
 - **状态：** `node scripts/e2e-file-ref-line-scroll.mjs` 在隔离 Electron 中挂载生产 `LinkifiedText` 与 `FilesTab`，并通过文件系统 IPC fixture 提供文件内容；不访问真实项目文件或模型服务。
+
+#### E2E-263：折叠项目后重置已加载的会话历史
+
+- **前提：** 侧边栏中保留一个至少有 12 条未置顶会话的项目，并可展开该项目组。
+- **步骤：** 1. 展开项目，确认最新的 10 条会话和“加载更多”控件可见。2. 点击“加载更多”，确认 12 条会话全部显示。3. 折叠项目后再次展开。4. 检查显示的会话和“加载更多”数量。
+- **预期：** 重新展开项目后只显示最新的 10 条未置顶会话，“加载更多”显示剩余的 2 条。折叠只清除该项目已加载更多的状态；会话选择和其他项目组不变。
+- **规格：** `04-ux/08-component-spec.md` §3.9；`04-ux/09-interaction-patterns.md` §1.6。
+- **验收：** C / D / Quality。
+- **里程碑：** MVP 后维护。
+- **覆盖：** `scripts/e2e/sidebar-row-states.mjs` 使用 Host fixture 项目和真实 CDP 指针点击验证完整用户流程。`sidebar-project-sessions.test.mjs` 覆盖初始页面、加载更多、折叠重置和项目隔离；`app-store-sidebar.test.mjs` 验证侧边栏折叠与加载更多使用对应状态转换。
 
 ### 导入扩展时发现 GUI 环境下的可执行文件回归（#1173）
 

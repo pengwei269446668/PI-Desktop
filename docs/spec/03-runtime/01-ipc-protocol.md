@@ -93,8 +93,13 @@ type ProjectGroupRecord = {
 `project-group/create` is additive and does not change the active workspace.
 `project-group/list` returns one row per logical group; old path projects are
 returned as `legacy` single-root groups. Group memory and instructions are
-shared by all sessions whose primary path belongs to the group. The primary
-path is the default builtin-tool workspace. The runtime advertises all registered
+shared by all sessions whose primary path belongs to the group. The first
+selected root is primary at creation; `project-group/update` may promote any
+other selected root by naming it as `primary`, and the host then stores that
+root first. The primary path is the default builtin-tool workspace. The runtime
+advertises all registered roots; an absolute path under an additional root is
+canonicalized and executed against that root, while arbitrary external paths
+still require the ordinary permission flow.
 roots; an absolute path under an additional root is canonicalized and executed
 against that root, while arbitrary external paths still require the ordinary
 permission flow.
@@ -1535,7 +1540,8 @@ Stopping a session aborts its in-flight user MCP tool calls. The client sends
 `notifications/cancelled` for each active request without closing a connection
 used by other sessions; a completed or canceled tool call is never replayed.
 Cancellation stops the local wait, while a server may ignore the notification
-and finish an already started side effect.
+and finish an already started side effect. A request that times out is
+cancelled the same way, with reason `timeout`; `initialize` is never cancelled.
 
 Desktop-only channels scan configuration written by other agent tools on the
 same machine — Claude Desktop (`claude_desktop_config.json` on macOS, Windows
@@ -1597,6 +1603,15 @@ one-liner.
 - `skills.read({ id, level?, projectPath? })` → `{ skill, body }`
 - `skills.remove({ id, level?, projectPath? })`
 - `skills.setEnabled({ id, enabled, level, projectPath? })`
+- `skills.disabledBuiltins()` → `{ disabled: string[] }`
+- `skills.setBuiltinEnabled({ id, enabled })` → `{ id, enabled }`
+
+Built-in skill activation is global and defaults to enabled. Host stores only
+disabled IDs in `<data>/agent-capabilities/skill-builtins.json`, separately
+from the scanned user-skill state. Renderer IPC lists bundled entries with
+their effective enabled state and sets one entry's global state. The
+corresponding Desktop channels are `pi-desktop/skill/builtin/list` and
+`pi-desktop/skill/builtin/setEnabled`.
 
 The list contains frontmatter-derived `name` and `description`, not the body.
 Only the description enters the prompt, and the body is fetched when the model
@@ -2442,22 +2457,23 @@ unchanged. See [provider configuration](12-provider-config-schema.md).
 ## 15. Cloud configuration sync
 
 The Settings → Cloud sync page uses the following renderer-to-Main channels;
-all are forwarded to the Host-owned `configSync.*` RPC methods. The page is a
-development-build-only surface for now; the channels and their Host contracts
-are unchanged:
+all are forwarded to the Host-owned `configSync.*` RPC methods. The page is
+available in all builds and carries an Experimental badge. Channel names stay
+stable; connection inputs
+and results use the S3-only contract in `types/config-sync.ts`:
 
 | IPC channel | Host method | contract |
 |---|---|---|
 | `pi-desktop/configSync/getState` | `configSync.getState` | redacted status, category selections, preview counts, and pending approval summaries |
-| `pi-desktop/configSync/test` | `configSync.test` | WebDAV capability probe using a temporary object; no configuration is persisted |
+| `pi-desktop/configSync/test` | `configSync.test` | S3 conditional-write probe and verified cleanup; returns `{ ok: true, conditionalWrites: true }` without persisting configuration |
 | `pi-desktop/configSync/configure` | `configSync.configure` | validates the endpoint, stores encrypted local sync metadata, and enables the vault |
-| `pi-desktop/configSync/syncNow` | `configSync.syncNow` | runs one Host-owned reconciliation cycle |
+| `pi-desktop/configSync/syncNow` | `configSync.syncNow` | runs one Host-owned two-way sync or local-snapshot backup, according to the saved mode |
 | `pi-desktop/configSync/pause` | `configSync.pause` | pauses or resumes this device only |
 | `pi-desktop/configSync/unlock` | `configSync.unlock` | unlocks the local vault for the current process/device |
 | `pi-desktop/configSync/approve` / `reject` | `configSync.approve` / `configSync.reject` | records a digest-bound local activation decision |
 | `pi-desktop/configSync/mapProject` | `configSync.mapProject` | binds one opaque project/group identity to one or more explicitly selected local folders, preserving primary-root order |
-| `pi-desktop/configSync/listHistory` | `configSync.listHistory` | lists redacted reachable revision metadata only |
-| `pi-desktop/configSync/restore` | `configSync.restore` | creates a new propagated revision from an explicitly acknowledged historical revision and stages local approvals/recovery |
+| `pi-desktop/configSync/listHistory` | `configSync.listHistory` | lists the saved mode's latest 30 indexed revisions; never emitted as a state-change event |
+| `pi-desktop/configSync/restore` | `configSync.restore` | sync publishes a new shared revision with propagation acknowledgment; backup restores locally without changing cloud history; both retain recovery/approvals |
 | `pi-desktop/configSync/changePassword` | `configSync.changePassword` | CAS-rewraps the vault key header without returning keys or secret values |
 | `pi-desktop/configSync/disconnect` | `configSync.disconnect` | removes local sync metadata and keys; it does not delete remote vault data |
 
@@ -2469,7 +2485,7 @@ transport/lifecycle coordinator and does not schedule, merge, encrypt, or
 apply configuration.
 
 A manual sync reports `configSync.progress` while it runs: the phase
-(`capture`, `download`, `merge`, `upload`, `apply`, or `cleanup`), the units
+(`capture`, `download`, `merge`, `upload`, or `apply`), the units
 done and total for that phase, and the bytes when they are known. A long upload
 of many resource objects is therefore not an interface with nothing to show.
 Background polls report nothing, since only the manual path has a caller

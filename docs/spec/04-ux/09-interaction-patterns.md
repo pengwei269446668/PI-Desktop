@@ -229,12 +229,13 @@ may be retained while exactly one workspace supplies the visible shell context.
    bridge. Its path then drives topbar identity, active workspace state, and
    new-task scope.
 3. **Collapse** — disclosure state belongs to each project path. Collapsing
-   hides children only; it neither changes the selected session nor stops a
-   run. The directory row is one full-width disclosure target containing its
-   chevron, folder, and label: selecting an inactive directory activates it
-   first, and every directory-row click toggles that group's children without
-   changing any other group's state. Project actions are separate sibling
-   controls and never toggle the directory.
+   does not change the selected session or stop a run, and clears that group's
+   loaded-more session history so its next expansion starts with the initial
+   ten unpinned sessions. The directory row is one full-width disclosure target
+   containing its chevron, folder, and label: selecting an inactive directory
+   activates it first, and every directory-row click toggles that group's
+   children without changing any other group's state. Project actions are
+   separate sibling controls and never toggle the directory.
 4. **Close** — closing removes only the retained tab. If it was active, the
    last remaining tab is selected or the visible workspace is cleared. Durable
    projects, sessions, and transcripts remain.
@@ -249,8 +250,10 @@ may be retained while exactly one workspace supplies the visible shell context.
 - **Edit project** — the project overflow menu in the sidebar and Project
   archive opens the same editor for the selected logical project. The editor
   trims and persists a 1–80 Unicode-code-point group name and lists every
-  registered folder. The Primary folder stays first and cannot be removed;
-  additional folders can be added through the native multi-selection picker or
+  registered folder. The Primary folder stays first and cannot be removed, and
+  every other folder row offers a Set as Primary action that promotes it to the
+  top and makes it the group's primary root on save; additional folders can be
+  added through the native multi-selection picker or
   removed individually. Saving updates group membership without rewriting path
   identities, workspace identity, session ownership, transcripts, or on-disk
   folders. Removing an additional folder with chats detaches it as a standalone
@@ -264,15 +267,15 @@ may be retained while exactly one workspace supplies the visible shell context.
 - **Archive** is non-destructive. Archived rows are hidden by default,
   available through Show archived, and restorable. Archiving does not cancel
   a turn or delete a transcript.
-- **Delete** removes a session or a project permanently and takes two clicks:
-  the first arms the overflow item and relabels it (`nav.deleteTaskConfirm` /
-  `project.deleteMenuConfirm`), and only the second click removes the row. The
-  arm expires on its own, so a row never stays one stray click away from a
-  permanent delete, and the folder on disk is never touched. A project whose
-  turn is still live still opens the confirmation dialog that names those
-  sessions and stops them first; an idle project is removed on that second
-  click. Sidebar overflow menus stay inside the window; a tall menu scrolls
-  within the available viewport so its last action remains reachable.
+- **Delete** removes a session or project permanently. Session deletion takes two
+  clicks: the first arms the overflow item and relabels it, and only the second
+  click removes the row. Project deletion opens a confirmation dialog as soon as
+  Delete is chosen from its menu. Only the dialog's explicit Delete button
+  removes the project; X, Cancel, Escape, or clicking the backdrop dismisses it
+  without changing anything. The dialog names the project and session count,
+  leaves the folder on disk untouched, and names/stops live sessions only after
+  the user confirms. Sidebar overflow menus stay inside the window; a tall menu
+  scrolls within the available viewport so its last action remains reachable.
 - **Create branch** snapshots an idle conversation's complete active
   transcript into an independent session in the same project/Temporary scope.
   The command is disabled while the source runs. Success selects the child and

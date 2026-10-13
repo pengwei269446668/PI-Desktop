@@ -17,6 +17,7 @@ import { todoWriteDescription, todoWriteParameters } from "./todo-tool.js";
 import { createJevClassifierTool } from "./jev-classifier-tool.js";
 import { scheduledToolParameters, scheduledToolDescriptions } from "./scheduled-tools.js";
 import { withPiFileOpToolNames } from "./pi-file-ops.js";
+import { remoteMutationIdentity } from "./remote-workspace.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import {
@@ -976,6 +977,8 @@ export type AgentRuntimeOptions = {
   customSystemPrompt?: CustomSystemPrompt;
   /** Session-bound workspace root used for path-scoped instruction requests. */
   projectPath?: string;
+  /** Remote tool root. Model requests and runtime state remain on this machine. */
+  remoteWorkspace?: { hostKey: string; path: string };
   /** Instructions resolved from the session's workspace. */
   projectInstructions?: ProjectInstructions;
   /** Durable project context loaded from host-owned project memory. */
@@ -1043,6 +1046,8 @@ export type RuntimeMatchConfig = {
   projectInstructions?: ProjectInstructions;
   projectMemory?: string;
   projectPath?: string;
+  /** Remote tool root. Model requests and runtime state remain on this machine. */
+  remoteWorkspace?: { hostKey: string; path: string };
   commandShell: CommandShellOption;
   subagents?: SubagentDefinition[];
   subagentProviders?: Record<string, RuntimeProviderConfig>;
@@ -1502,6 +1507,58 @@ function selectRetainedUserMessages(
   return selected.reverse();
 }
 
+/**
+ * Model-visible text for one host tool content block. Besides plain `text`
+ * blocks, MCP servers return file bodies as embedded text resources and large
+ * payloads as resource links (github-mcp-server `get_file_contents` sends a
+ * status line plus one of these), so dropping them next to a sibling text
+ * block hides the actual result from the model. Binary resources and other
+ * block kinds have no text to show and stay out of the text channel.
+ */
+function hostContentBlockText(block: unknown): string | undefined {
+  if (!isRecord(block)) return undefined;
+  if (block.type === "text" && typeof block.text === "string") return block.text;
+  if (
+    block.type === "resource" &&
+    isRecord(block.resource) &&
+    typeof block.resource.text === "string"
+  ) {
+    return block.resource.text;
+  }
+  if (block.type === "resource_link" && typeof block.uri === "string") {
+    const name = typeof block.name === "string" && block.name.trim()
+      ? `${block.name.trim()}: `
+      : "";
+    return `[resource link] ${name}${block.uri}`;
+  }
+  return undefined;
+}
+
+/**
+ * JSON text fallback for a host result that produced no text blocks. Image
+ * `data` and resource `blob` bytes stay off the text channel; type, mimeType,
+ * and uri remain so the model still sees what was attached.
+ */
+function withoutInlineBinary(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((entry) => withoutInlineBinary(entry));
+  if (!isRecord(value)) return value;
+  const next: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "data" && value.type === "image") continue;
+    if (key === "resource" && value.type === "resource" && isRecord(entry)) {
+      const resource: Record<string, unknown> = {};
+      for (const [resourceKey, resourceValue] of Object.entries(entry)) {
+        if (resourceKey === "blob") continue;
+        resource[resourceKey] = withoutInlineBinary(resourceValue);
+      }
+      next.resource = resource;
+      continue;
+    }
+    next[key] = withoutInlineBinary(entry);
+  }
+  return next;
+}
+
 /** Rebuild a pi-ai tool result from a persisted tool row. Rows that never
  * finished (app quit / abort mid-tool) restore as errored results so the
  * model knows the call produced nothing. Exported for tests. */
@@ -1742,6 +1799,7 @@ export class DesktopAgentRuntime {
   private activationHydrated = false;
   private scratchDir?: string;
   private projectPath?: string;
+  private remoteWorkspace?: { hostKey: string; path: string };
   private commandShell: CommandShellOption;
   private baseProjectInstructions?: ProjectInstructions;
   private projectInstructions?: ProjectInstructions;
@@ -1921,8 +1979,9 @@ export class DesktopAgentRuntime {
       });
     }
     this.commandShell = opts.commandShell;
-    this.scratchDir = opts.scratchDir;
-    this.projectPath = opts.projectPath?.trim() || undefined;
+    this.remoteWorkspace = opts.remoteWorkspace;
+    this.scratchDir = opts.remoteWorkspace ? undefined : opts.scratchDir;
+    this.projectPath = opts.remoteWorkspace?.path ?? (opts.projectPath?.trim() || undefined);
     this.customSystemPrompt = opts.customSystemPrompt;
     this.baseProjectInstructions = opts.projectInstructions;
     this.projectInstructions = opts.projectInstructions;
@@ -2583,7 +2642,8 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
       safeJson(this.customSystemPrompt ?? null) ===
         safeJson(config.customSystemPrompt ?? null) &&
       (this.projectMemory ?? "") === (config.projectMemory?.trim() ?? "") &&
-      (this.projectPath ?? "") === (config.projectPath?.trim() ?? "") &&
+      (this.projectPath ?? "") === (config.remoteWorkspace?.path ?? config.projectPath?.trim() ?? "") &&
+      safeJson(this.remoteWorkspace ?? null) === safeJson(config.remoteWorkspace ?? null) &&
       // Editing `~/.agents/subagents/*.md` must reach the next prompt. Definition
       // bodies are part of the `Task` tool's behavior, so unlike skills they
       // are compared in full.
@@ -2752,6 +2812,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     return {
       sessionId: this.sessionId,
       cwd: this.extensionCwd(),
+      remoteWorkspace: Boolean(this.remoteWorkspace),
       getModel: () => runtime.model,
       setModel: (model, signal) => runtime.setExtensionModel(model, signal),
       modelRegistry: runtime.extensionModelRegistry(),
@@ -3264,7 +3325,9 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
         onUpdate,
       ) => {
         const mutationPath = PATH_MUTATING_TOOLS.has(toolName) && isRecord(params) && typeof params.path === "string"
-          ? await mutationFailureKey(params.path, this.projectPath ?? this.scratchDir)
+          ? this.remoteWorkspace
+            ? remoteMutationIdentity(this.remoteWorkspace, params.path)
+            : await mutationFailureKey(params.path, this.projectPath ?? this.scratchDir)
           : undefined;
         await this.loadPathInstructions(toolName, params);
         const isBash = toolName === "Bash";
@@ -3545,24 +3608,26 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
           // and hand images to the model instead of stringifying (#1360).
           const textParts: string[] = [];
           for (const block of rawContent) {
-            if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
-              textParts.push(block.text);
-            }
+            const blockText = hostContentBlockText(block);
+            if (blockText !== undefined) textParts.push(blockText);
           }
           collectImageBlocks(rawContent);
-          text = textParts.join("\n") || JSON.stringify(rawContent, null, 2);
+          text =
+            textParts.join("\n") ||
+            JSON.stringify(withoutInlineBinary(rawContent), null, 2);
           details = { blocks: rawContent, imageCount: imageBlocks.length };
         } else if (isRecord(rawContent) && Array.isArray(rawContent.content)) {
           // MCP tools return `content: [{ type: "image" | "text", ... }]`.
           const contentBlocks = rawContent.content;
           const textParts: string[] = [];
           for (const block of contentBlocks) {
-            if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
-              textParts.push(block.text);
-            }
+            const blockText = hostContentBlockText(block);
+            if (blockText !== undefined) textParts.push(blockText);
           }
           collectImageBlocks(contentBlocks);
-          text = textParts.join("\n") || JSON.stringify(rawContent, null, 2);
+          text =
+            textParts.join("\n") ||
+            JSON.stringify(withoutInlineBinary(rawContent), null, 2);
           details = { ...rawContent, imageCount: imageBlocks.length };
         } else if (isRecord(rawContent) && Array.isArray(rawContent.images)) {
           text =
@@ -5848,7 +5913,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     toolName: string,
     params: unknown,
   ): Promise<void> {
-    if (!PATH_SCOPED_INSTRUCTION_TOOLS.has(toolName)) {
+    if (this.remoteWorkspace || !PATH_SCOPED_INSTRUCTION_TOOLS.has(toolName)) {
       return undefined;
     }
     const path = isRecord(params) && typeof params.path === "string"
@@ -8708,7 +8773,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
   }
 
   /** Resolve attachments against the configuration of the running turn. */
-  steeringContext(expectedTurnId: string): { projectPath?: string; supportsVision: boolean } {
+  steeringContext(expectedTurnId: string): { projectPath?: string; remoteWorkspace?: { hostKey: string; path: string }; supportsVision: boolean } {
     if (
       this.disposed || !this.acceptingSteering || this.runCancelled ||
       this.turnHadError || !this.getStatus().isRunning ||
@@ -8719,7 +8784,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
         errorCode: "TURN_NOT_FOUND",
       });
     }
-    return { projectPath: this.projectPath, supportsVision: this.model.input.includes("image") };
+    return { projectPath: this.projectPath, ...(this.remoteWorkspace ? { remoteWorkspace: this.remoteWorkspace } : {}), supportsVision: this.model.input.includes("image") };
   }
 
   steer(input: RuntimePrompt, expectedTurnId: string, message: UiMessage): { accepted: boolean; turnId: string } {

@@ -2,7 +2,7 @@ export const PROTOCOL_VERSION = 11 as const;
 export const SCHEMA_VERSION = 16 as const;
 export const APP_ID = "net.aiuo.pi-desktop";
 export const APP_NAME = "PI-Desktop";
-export const APP_VERSION = "0.18.0-beta.5";
+export const APP_VERSION = "0.18.0-beta.7";
 
 export const APP_MENU_COMMANDS = [
   "newTask",
@@ -176,6 +176,7 @@ export const IPC = {
     projectMemoryGet: "pi-desktop/project/memory/get",
     projectMemorySave: "pi-desktop/project/memory/save",
     projectGroupList: "pi-desktop/project-group/list",
+    projectGroupCreateRemote: "pi-desktop/project-group/createRemote",
     projectGroupCreate: "pi-desktop/project-group/create",
     projectGroupRename: "pi-desktop/project-group/rename",
     projectGroupUpdate: "pi-desktop/project-group/update",
@@ -225,6 +226,7 @@ export const IPC = {
     remoteHostBootstrap: "pi-desktop/remoteHost/bootstrap",
     remoteHostReconnect: "pi-desktop/remoteHost/reconnect",
     remoteHostProjects: "pi-desktop/remoteHost/projects",
+    remoteHostBrowseProjects: "pi-desktop/remoteHost/browseProjects",
     remoteHostRegisterProject: "pi-desktop/remoteHost/registerProject",
     remoteHostSessions: "pi-desktop/remoteHost/sessions",
     remoteHostCreateSession: "pi-desktop/remoteHost/createSession",
@@ -324,6 +326,8 @@ export const IPC = {
     mcpImportRun: "pi-desktop/mcp/importRun",
     mcpMarketSearch: "pi-desktop/mcp/market/search",
     skillList: "pi-desktop/skill/list",
+    skillBuiltinList: "pi-desktop/skill/builtin/list",
+    skillBuiltinSetEnabled: "pi-desktop/skill/builtin/setEnabled",
     skillCreate: "pi-desktop/skill/create",
     skillImport: "pi-desktop/skill/import",
     skillImportScan: "pi-desktop/skill/importScan",

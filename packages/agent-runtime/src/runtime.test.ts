@@ -167,6 +167,7 @@ function createRuntime(
     compactionSettings: ContextCompactionSettings;
     compactionStrategy: CompactionStrategy;
     projectPath: string;
+    remoteWorkspace: { hostKey: string; path: string };
     scratchDir: string;
     customSystemPrompt: import("./custom-system-prompt.js").CustomSystemPrompt;
     projectInstructions: import("./project-instructions.js").ProjectInstructions;
@@ -197,6 +198,7 @@ function createRuntime(
     compactionSettings: overrides.compactionSettings,
     compactionStrategy: overrides.compactionStrategy,
     projectPath: overrides.projectPath,
+    remoteWorkspace: overrides.remoteWorkspace,
     scratchDir: overrides.scratchDir,
     customSystemPrompt: overrides.customSystemPrompt,
     pluginTools: overrides.pluginTools,
@@ -11444,6 +11446,185 @@ describe("toolResultFromUi image restoration (issue #1073)", () => {
     expect(restored.content).toEqual(expected);
     await runtime.dispose();
   });
+
+  it.each([
+    [
+      "MCP content property",
+      {
+        content: [
+          { type: "image", data: "cG5nLWJ5dGVz", mimeType: "image/png" },
+        ],
+        isError: false,
+      },
+    ],
+    [
+      "plugin bare content-block array",
+      [{ type: "image", data: "cG5nLWJ5dGVz", mimeType: "image/png" }],
+    ],
+  ])(
+    "keeps image bytes out of the text fallback for an image-only %s",
+    async (_shape, rawContent) => {
+      const host = {
+        call: vi.fn().mockImplementation((method: string) =>
+          Promise.resolve(
+            method === "project.instructions.resolve"
+              ? { entries: [] }
+              : { ok: true, content: rawContent },
+          ),
+        ),
+      };
+      const runtime = createRuntime({ host });
+      try {
+        const read = (runtime as any).toolCatalog.get("Read");
+        const result = await read.execute("image-only-result", { path: "screenshot.png" });
+        const textBlocks = result.content.filter(
+          (block: { type: string }) => block.type === "text",
+        );
+        expect(textBlocks.length).toBeGreaterThan(0);
+        for (const block of textBlocks) {
+          expect(block.text).not.toContain("cG5nLWJ5dGVz");
+        }
+        expect(result.content).toContainEqual({
+          type: "image",
+          data: "cG5nLWJ5dGVz",
+          mimeType: "image/png",
+        });
+        expect(result.details).toMatchObject({ imageCount: 1 });
+      } finally {
+        await runtime.dispose();
+      }
+    },
+  );
+
+  it("keeps blob bytes out of the text fallback for an MCP resource", async () => {
+    const rawContent = {
+      content: [
+        {
+          type: "resource",
+          resource: {
+            uri: "file:///a.bin",
+            mimeType: "application/octet-stream",
+            blob: "QkxPQi1CWVRFUw==",
+          },
+        },
+      ],
+      isError: false,
+    };
+    const host = {
+      call: vi.fn().mockImplementation((method: string) =>
+        Promise.resolve(
+          method === "project.instructions.resolve"
+            ? { entries: [] }
+            : { ok: true, content: rawContent },
+        ),
+      ),
+    };
+    const runtime = createRuntime({ host });
+    try {
+      const read = (runtime as any).toolCatalog.get("Read");
+      const result = await read.execute("blob-resource-result", { path: "a.bin" });
+      const textBlocks = result.content.filter(
+        (block: { type: string }) => block.type === "text",
+      );
+      expect(textBlocks.length).toBeGreaterThan(0);
+      for (const block of textBlocks) {
+        expect(block.text).not.toContain("QkxPQi1CWVRFUw==");
+        expect(block.text).toContain("file:///a.bin");
+        expect(block.text).toContain("application/octet-stream");
+      }
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("keeps image bytes out of the text fallback for a non-vision model", async () => {
+    const rawContent = {
+      content: [
+        { type: "image", data: "cG5nLWJ5dGVz", mimeType: "image/png" },
+      ],
+      isError: false,
+    };
+    const host = {
+      call: vi.fn().mockImplementation((method: string) =>
+        Promise.resolve(
+          method === "project.instructions.resolve"
+            ? { entries: [] }
+            : { ok: true, content: rawContent },
+        ),
+      ),
+    };
+    const runtime = createRuntime({
+      host,
+      provider: {
+        ...provider,
+        modelConfig: {
+          ...provider.modelConfig!,
+          input: ["text"],
+        },
+      },
+    });
+    try {
+      const read = (runtime as any).toolCatalog.get("Read");
+      const result = await read.execute("image-only-text-model", { path: "screenshot.png" });
+      const textBlocks = result.content.filter(
+        (block: { type: string }) => block.type === "text",
+      );
+      expect(textBlocks.length).toBeGreaterThan(0);
+      for (const block of textBlocks) {
+        expect(block.text).not.toContain("cG5nLWJ5dGVz");
+      }
+      expect(result.content.some((block: { type: string }) => block.type === "image")).toBe(
+        false,
+      );
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("keeps embedded MCP text resources and resource links next to a status text block", async () => {
+    // github-mcp-server `get_file_contents` answers with a status line plus the
+    // file body as an embedded resource, and with a resource link for large files.
+    const rawContent = {
+      content: [
+        { type: "text", text: "successfully downloaded text file (SHA: abc123)" },
+        {
+          type: "resource",
+          resource: {
+            uri: "repo://acme/app/contents/src/index.ts",
+            mimeType: "text/plain",
+            text: "export const answer = 42;\n",
+          },
+        },
+        {
+          type: "resource_link",
+          uri: "https://raw.githubusercontent.com/acme/app/main/big.json",
+          name: "big.json",
+        },
+      ],
+      isError: false,
+    };
+    const host = {
+      call: vi.fn().mockImplementation((method: string) =>
+        Promise.resolve(
+          method === "project.instructions.resolve"
+            ? { entries: [] }
+            : { ok: true, content: rawContent },
+        ),
+      ),
+    };
+    const runtime = createRuntime({ host });
+    try {
+      const read = (runtime as any).toolCatalog.get("Read");
+      const result = await read.execute("resource-result", { path: "src/index.ts" });
+      expect(result.content).toHaveLength(1);
+      const text = result.content[0].text as string;
+      expect(text).toContain("successfully downloaded text file (SHA: abc123)");
+      expect(text).toContain("export const answer = 42;");
+      expect(text).toContain("https://raw.githubusercontent.com/acme/app/main/big.json");
+    } finally {
+      await runtime.dispose();
+    }
+  });
 });
 
 it("does not reuse stale plugin declarations when schema or permission metadata changes", async () => {
@@ -11553,5 +11734,24 @@ describe("inline image placement", () => {
     } finally {
       await runtime.dispose();
     }
+  });
+});
+
+
+describe("local runtime with a remote tool workspace", () => {
+  it("keeps the local model and dispatches workspace tools through the Host without local instruction probes", async () => {
+    const call = vi.fn(async (method: string) => {
+      if (method === "tools.execute") return { ok: true, content: "remote contents" };
+      throw new Error(`Unexpected local workspace access: ${method}`);
+    });
+    const runtime = createRuntime({ host: { call }, remoteWorkspace: { hostKey: "ssh", path: "/remote/project" }, scratchDir: "/local/scratch" });
+    const result = await runtimeTool(runtime, "Read").execute("remote-read", { path: "README.md" }, undefined, undefined);
+    expect(result.content).toContainEqual({ type: "text", text: "remote contents" });
+    expect(call.mock.calls.map(([method]) => method)).toEqual(["tools.execute"]);
+    const internals = runtime as unknown as { projectPath: string; provider: RuntimeProviderConfig; agent: Agent };
+    expect(internals.projectPath).toBe("/remote/project");
+    expect(internals.provider.id).toBe(provider.id);
+    expect(internals.agent.state.systemPrompt).not.toContain("/local/scratch");
+    await runtime.dispose();
   });
 });
